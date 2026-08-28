@@ -26,10 +26,19 @@ def to_bin(mz: float, bin_width: float) -> int:
     return round(mz / bin_width)
 
 
+def neighbour_bins(bin_no: int) -> tuple[int, int, int]:
+    """あるビンと、その両隣。
+
+    照会時の探索窓と、背景頻度を数えるときの展開窓は必ず同じでなければならない。
+    ずれると IDF が実際の当たりやすさと食い違い、重みが静かに歪む。
+    定義をここ 1 箇所に集約する。
+    """
+    return (bin_no - 1, bin_no, bin_no + 1)
+
+
 def probe_bins(mz: float, bin_width: float) -> tuple[int, int, int]:
     """照会時に探るビン番号。境界を挟んだ相手を取りこぼさないための ±1。"""
-    center = to_bin(mz, bin_width)
-    return (center - 1, center, center + 1)
+    return neighbour_bins(to_bin(mz, bin_width))
 
 
 def derive_neutral_losses(record: SpectrumRecord) -> tuple[Peak, ...]:

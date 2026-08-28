@@ -13,6 +13,8 @@ import math
 import sqlite3
 from collections import defaultdict
 
+from massbank_context.core.binning import neighbour_bins
+
 
 def build_background(conn: sqlite3.Connection) -> int:
     """axis_background を作り直し、書き込んだ行数を返す。"""
@@ -32,7 +34,7 @@ def build_background(conn: sqlite3.Connection) -> int:
     for acquisition_class, axis, bin_no, inchikey in conn.execute(
             "SELECT DISTINCT r.acquisition_class, p.axis, p.bin, r.inchikey"
             " FROM peaks p JOIN records r ON r.record_id = p.record_id"):
-        for neighbour in (bin_no - 1, bin_no, bin_no + 1):
+        for neighbour in neighbour_bins(bin_no):
             seen[(acquisition_class, axis, neighbour)].add(inchikey)
 
     rows = []
