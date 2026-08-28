@@ -293,17 +293,36 @@ def test_top_k_limits_results_with_multiple_candidates(conn_multi):
 
 
 def test_query_without_precursor_returns_all_records_in_class(conn):
-    """precursor が無いクエリは precursor で絞れない。曖昧なまま拒否せず全件を候補にする。"""
+    """precursor が無いクエリは precursor で絞れない。曖昧なまま拒否せず全件を候補にする。
+
+    `>= 1` では、絞り込みが部分的に復活して通常の窓から外れるレコード
+    （ここでは precursor 600.0 の MSBNK-TEST-A0002）が落ちる退行を見逃す
+    （2 件 → 1 件に減っても通ってしまう）。conn フィクスチャの中身は
+    決まっているので、実測した accession の並びをそのまま固定する。
+    両者とも matched_fragments=1 で weighted_score が 0.0 の同点になるため
+    （bin 8603 は 2 レコード両方に出現し idf=log(2/2)=0）、並び順は
+    accession のタイブレークで決まり、実行のたびに安定する。
+    """
     query = QuerySpectrum(spectrum_id="q", precursor_mz=None, polarity="POSITIVE",
                           peaks=(Peak(86.0349, 11.0, None, None),), source="test")
     results = match_spectrum(conn, query, "LC-ESI-MS2")
-    assert len(results) >= 1
+    assert [r.accession for r in results] == [
+        "MSBNK-TEST-A0001", "MSBNK-TEST-A0002"]
     assert all(r.precursor_delta is None for r in results)
 
 
 def test_query_without_precursor_or_polarity_does_not_filter_by_polarity(conn):
-    """polarity=None は「極性で絞らない」を意味する（.dcl の ion_mode=2 が正当に生む）。"""
+    """polarity=None は「極性で絞らない」を意味する（.dcl の ion_mode=2 が正当に生む）。
+
+    上のテストと同じ理由で件数・同一性を固定する。conn フィクスチャは
+    2 レコードとも polarity=POSITIVE で登録されているため、polarity で
+    絞らなくても結果は同じ 2 件になる。ここで検証したいのは
+    「precursor で絞られない」という経路そのものであり、この 2 レコードの
+    組み合わせでは polarity 無絞り込みの効果は結果件数には現れない。
+    """
     query = QuerySpectrum(spectrum_id="q", precursor_mz=None, polarity=None,
                           peaks=(Peak(86.0349, 11.0, None, None),), source="test")
     results = match_spectrum(conn, query, "LC-ESI-MS2")
-    assert len(results) >= 1
+    assert [r.accession for r in results] == [
+        "MSBNK-TEST-A0001", "MSBNK-TEST-A0002"]
+    assert all(r.precursor_delta is None for r in results)
