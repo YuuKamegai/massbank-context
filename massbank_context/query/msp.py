@@ -16,9 +16,23 @@ _FIELD_ALIASES = {
     "PEPMASS": "precursor_mz",
     "IONMODE": "polarity",
     "POLARITY": "polarity",
-    "RETENTIONTIME": "retention_time",
-    "RTINSECONDS": "retention_time",
+    "RETENTIONTIME": "retention_time",          # 分
+    "RTINSECONDS": "retention_time_seconds",    # 秒。分へ変換する
 }
+
+
+def _split_header(line: str) -> tuple[str, str] | None:
+    """ヘッダ行を (キー, 値) に割る。MSP は `KEY: value`、MGF は `KEY=value`。
+
+    最初に現れた区切り文字を採るので、`TITLE=a:b` も `NAME: a=b` も正しく割れる。
+    値そのものに区切り文字が含まれていても、キー側は壊れない。
+    """
+    candidates = [line.find(sep) for sep in (":", "=")]
+    positions = [pos for pos in candidates if pos > 0]
+    if not positions:
+        return None
+    cut = min(positions)
+    return line[:cut].strip(), line[cut + 1:].strip()
 
 
 def _normalise_polarity(raw: str | None) -> str | None:
@@ -55,6 +69,15 @@ def read_msp(path: str | Path) -> list[QuerySpectrum]:
     def flush() -> None:
         if not pairs and not fields:
             return
+        # RT の単位は分に統一する。MSP の RETENTIONTIME は分、
+        # MGF の RTINSECONDS は秒。混ざったまま同じフィールドに入れると
+        # 後から単位のずれに気付けない。
+        if "retention_time" in fields:
+            retention_time = float(fields["retention_time"])
+        elif "retention_time_seconds" in fields:
+            retention_time = float(fields["retention_time_seconds"]) / 60.0
+        else:
+            retention_time = None
         spectra.append(QuerySpectrum(
             spectrum_id=f"{stem}:{len(spectra) + 1}",
             precursor_mz=float(fields["precursor_mz"].split()[0])
@@ -62,8 +85,7 @@ def read_msp(path: str | Path) -> list[QuerySpectrum]:
             polarity=_normalise_polarity(fields.get("polarity")),
             peaks=_to_peaks(pairs),
             source=str(path),
-            retention_time=float(fields["retention_time"])
-            if "retention_time" in fields else None,
+            retention_time=retention_time,
         ))
         fields.clear()
         pairs.clear()
@@ -75,8 +97,9 @@ def read_msp(path: str | Path) -> list[QuerySpectrum]:
             continue
         if line.upper() == "BEGIN IONS":
             continue
-        if ":" in line and not line[0].isdigit():
-            key, _sep, value = line.partition(":")
+        header = _split_header(line) if not line[0].isdigit() else None
+        if header:
+            key, value = header
             alias = _FIELD_ALIASES.get(key.strip().upper())
             if alias:
                 fields[alias] = value.strip()
@@ -86,6 +109,8 @@ def read_msp(path: str | Path) -> list[QuerySpectrum]:
             try:
                 pairs.append((float(parts[0]), float(parts[1])))
             except ValueError:
+                # ヘッダでもピークでもない紛れ込んだ行（コメント等）は
+                # 意図的に読み飛ばす。
                 continue
     flush()
     return spectra
