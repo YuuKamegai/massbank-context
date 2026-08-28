@@ -57,16 +57,58 @@ def test_build_index_rejects_low_resolution(tmp_path):
     assert stats["rejected"] == 1
 
 
+def test_build_index_survives_corrupt_ttl(tmp_path, caplog):
+    """壊れた TTL 1 個が走査全体を止めない。failed に計上され、健全な分は索引に入る。
+
+    これはこのタスクが単独で負う正しさ要件そのもの。read_ttl_file は
+    graph.parse() を包まない設計で、ファイル単位の隔離は build_index の責務。
+    """
+    ttl_dir = _ttl_dir(tmp_path)
+    (ttl_dir / "broken.ttl").write_text(
+        "this is not valid turtle @@@ <<<", encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        stats = build_index(ttl_dir, tmp_path / "index.sqlite")
+
+    assert stats["scanned"] == 3          # 壊れたファイルも走査対象に数える
+    assert stats["failed"] == 1
+    assert stats["parsed"] == 2           # 健全な 2 件は読めている
+    assert stats["accepted"] == 2         # 索引にも入っている
+    assert len(caplog.records) == 1
+    assert "broken.ttl" in caplog.records[0].message
+
+
 def test_build_index_is_idempotent(tmp_path):
-    """同じ出力先に 2 回走らせても件数が倍にならない。"""
+    """同じ出力先に 2 回走らせても、依存する 4 表のいずれも二重にならない。"""
     ttl_dir = _ttl_dir(tmp_path)
     output = tmp_path / "index.sqlite"
-    build_index(ttl_dir, output)
+
     build_index(ttl_dir, output)
     conn = sqlite3.connect(str(output))
-    count = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+    first = {
+        "records": conn.execute("SELECT COUNT(*) FROM records").fetchone()[0],
+        "peaks": conn.execute("SELECT COUNT(*) FROM peaks").fetchone()[0],
+        "background": conn.execute(
+            "SELECT COUNT(*) FROM axis_background").fetchone()[0],
+    }
+    first_meta = read_meta(conn)
     conn.close()
-    assert count == 2
+
+    build_index(ttl_dir, output)
+    conn = sqlite3.connect(str(output))
+    second = {
+        "records": conn.execute("SELECT COUNT(*) FROM records").fetchone()[0],
+        "peaks": conn.execute("SELECT COUNT(*) FROM peaks").fetchone()[0],
+        "background": conn.execute(
+            "SELECT COUNT(*) FROM axis_background").fetchone()[0],
+    }
+    second_meta = read_meta(conn)
+    conn.close()
+
+    assert second == first
+    assert second_meta["n_records"] == first_meta["n_records"]
+    assert second_meta["n_inchikey"] == first_meta["n_inchikey"]
+    assert second_meta["acquisition_classes"] == first_meta["acquisition_classes"]
 
 
 def test_main_returns_zero(tmp_path, capsys):
