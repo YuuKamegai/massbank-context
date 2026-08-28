@@ -38,6 +38,29 @@ def test_reads_neutral_loss_directly():
     assert by_mz[110.0349] == 157.0506
 
 
+def test_neutral_loss_is_read_not_computed():
+    """保存された mbo:neutral_loss を読むのであって precursor_mz - mz を計算しない(spec §6.3)。
+
+    fixture の値は precursor_mz - mz とほぼ一致するため、丸め誤差でしか両者を判別できない。
+    ここでは計算では絶対に得られない値を保存し、読み取り経路であることを曖昧さなく示す。
+    """
+    ttl = """
+    @prefix mbo: <http://www.massbank.jp/ontology/> .
+    @prefix sio: <http://semanticscience.org/resource/> .
+
+    [] a mbo:MassSpectrum ;
+        mbo:mass_spectram_meta_data [ a mbo:MassSpectramMetaData ;
+                mbo:precursor_mz_value 300.0 ] ;
+        mbo:has_peak [ sio:SIO_000255 [
+                    sio:SIO_000255 [ a mbo:mz ; sio:SIO_000300 100.0 ],
+                                    [ a mbo:neutral_loss ; sio:SIO_000300 999.0 ] ] ] .
+    """
+    graph = rdflib.Graph()
+    graph.parse(data=ttl, format="turtle")
+    rec = parse_gen_b(graph)[0]
+    assert rec.peaks[0].neutral_loss == 999.0     # 300.0 - 100.0 = 200.0 ではない
+
+
 def test_peaks_sorted_and_complete():
     rec = parse_gen_b(_graph(GEN_B))[0]
     mzs = [p.mz for p in rec.peaks]

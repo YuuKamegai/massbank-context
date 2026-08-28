@@ -11,44 +11,13 @@
 """
 from __future__ import annotations
 
-import logging
-
 import rdflib
 
 from massbank_context.core.models import Peak, SpectrumRecord
+from massbank_context.ttl._literals import _number, _one, _text
 from massbank_context.ttl.generation import MBO, SCHEMA, SIO, SIO_HAS_VALUE
 
-logger = logging.getLogger(__name__)
-
 SIO_HAS_ATTRIBUTE = SIO["SIO_000255"]
-CHEMINF_INCHIKEY = SIO["CHEMINF_000059"]
-
-
-def _one(graph: rdflib.Graph, subject, predicate):
-    for value in graph.objects(subject, predicate):
-        return value
-    return None
-
-
-def _text(value) -> str | None:
-    return None if value is None else str(value)
-
-
-def _number(value) -> float | None:
-    """リテラルを float にする。欠損は None、変換不能も None を返す。
-
-    欠損（value が None）は正常。一方「値はあるが float にできない」は
-    上流データの異常であり、54,183 ファイルの走査で黙って落ちると気付けないため、
-    そちらだけ warning を出す。例外は投げない — 不正リテラル 1 個でレコード全体を
-    失うほうが損失が大きい。
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        logger.warning("float に変換できないリテラルを無視しました: %r", value)
-        return None
 
 
 def _typed_value(graph: rdflib.Graph, annotation, type_uri):

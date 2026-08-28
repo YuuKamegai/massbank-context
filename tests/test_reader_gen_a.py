@@ -3,8 +3,9 @@ from pathlib import Path
 
 import rdflib
 
+from massbank_context.ttl._literals import _number
 from massbank_context.ttl.generation import detect_generation
-from massbank_context.ttl.reader_gen_a import _number, parse_gen_a
+from massbank_context.ttl.reader_gen_a import parse_gen_a
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ttl" / "gen_a" / "MSBNK-TEST-A0001.ttl"
 
@@ -83,7 +84,7 @@ def test_number_logs_warning_on_invalid_literal(caplog):
     区別して記録できることを確認する。
     """
     with caplog.at_level(logging.WARNING,
-                          logger="massbank_context.ttl.reader_gen_a"):
+                          logger="massbank_context.ttl._literals"):
         assert _number("not-a-number") is None
         assert _number(None) is None
 
