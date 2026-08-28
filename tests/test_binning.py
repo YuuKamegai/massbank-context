@@ -6,6 +6,7 @@ from massbank_context.core.binning import (
     probe_bins,
     to_bin,
 )
+from massbank_context.core.classify import NEUTRAL_LOSS_CAPABLE
 from massbank_context.core.models import Peak, SpectrumRecord
 
 
@@ -88,3 +89,33 @@ def test_negative_neutral_loss_is_dropped():
 def test_invalid_bin_width_raises(bin_width):
     with pytest.raises(ValueError):
         to_bin(100.0, bin_width)
+
+
+def test_neutral_loss_entries_carry_no_formula():
+    """formula は product ion の組成式。中性損失の行に載せてはいけない。"""
+    entries = axis_entries(_record(), bin_width=0.01)
+    for axis, _bin, _intensity, formula in entries:
+        if axis == "neutral_loss":
+            assert formula is None
+    # product_ion 側では失われていないこと
+    product_formulas = [f for axis, _b, _i, f in entries if axis == "product_ion"]
+    assert "C2H4N3O+" in product_formulas
+
+
+def test_neutral_loss_skipped_when_precursor_missing_despite_capable_class():
+    """MALDI-MS2 は NEUTRAL_LOSS_CAPABLE だが precursor を持たない記録が実在する。
+
+    実データ: JEOL の MALDI-TOFTOF は ms_type=MS2 だが precursor_mz_value を持たない。
+    """
+    rec = _record(instrument_type="MALDI-TOFTOF", ms_type="MS2", precursor_mz=None)
+    assert rec.acquisition_class in NEUTRAL_LOSS_CAPABLE   # 第 1 ゲートは通る
+    peaks = derive_neutral_losses(rec)
+    assert all(p.neutral_loss is None for p in peaks)      # 第 2 ゲートで止まる
+
+
+def test_neutral_loss_skipped_for_incapable_class_even_with_precursor():
+    """GC-EI-MS は precursor を持っていても中性損失軸を使わない。"""
+    rec = _record(instrument_type="EI-B", ms_type="MS", precursor_mz=230.0552)
+    assert rec.acquisition_class not in NEUTRAL_LOSS_CAPABLE
+    peaks = derive_neutral_losses(rec)
+    assert all(p.neutral_loss is None for p in peaks)

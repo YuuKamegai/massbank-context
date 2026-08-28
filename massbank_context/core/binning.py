@@ -66,6 +66,10 @@ def axis_entries(record: SpectrumRecord,
         entries.append((PRODUCT_ION, to_bin(peak.mz, bin_width),
                         peak.relative_intensity, peak.formula))
         if peak.neutral_loss is not None:
+            # formula は product ion の tentative_formula であり、中性損失そのものの
+            # 組成ではない（それは precursor_formula - fragment_formula で、算出していない）。
+            # 中性損失の行に product ion の式を載せると列の意味について嘘をつくことになる。
+            # 同じピークの product_ion 行が式を持っているので情報は失われない。
             entries.append((NEUTRAL_LOSS, to_bin(peak.neutral_loss, bin_width),
-                            peak.relative_intensity, peak.formula))
+                            peak.relative_intensity, None))
     return entries
