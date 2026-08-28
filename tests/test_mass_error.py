@@ -89,3 +89,22 @@ def test_zero_spread_falls_back():
 
 def test_percentiles_are_declared():
     assert MASS_ERROR_PERCENTILES == (50.0, 90.0, 95.0, 99.0)
+
+
+def test_two_fragments_in_one_record_are_not_instrument_error():
+    """1 レコード内の別々のフラグメント同士を装置誤差として数えない。
+
+    測っているのは「同じフラグメントを別々に測ったときのばらつき」なので、
+    標本には必ず 2 つ以上のレコード由来の m/z が要る。既定の
+    cluster_tolerance 0.05 は高分解能で測ろうとしている誤差の 10 倍ほどあり、
+    50 mDa 以内に並ぶ別フラグメントは実在する。1 レコードから作られた
+    クラスタを許すと、その距離がそのまま「装置誤差」に化ける。
+
+    choose_bin_width は全装置クラスの 95 パーセンタイルの最大値を採るため、
+    汚染された 1 クラスが索引全体のビンを太らせ、照合を緩めて IDF を薄める。
+    """
+    records = [
+        _record("A1", "IK1", [100.000, 100.030]),   # 同一レコード内の 2 本
+        _record("A2", "IK1", [500.000]),            # 群の条件を満たすための 2 件目
+    ]
+    assert measure_mass_error(records) == {}

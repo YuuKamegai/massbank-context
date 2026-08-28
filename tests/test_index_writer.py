@@ -182,3 +182,32 @@ def test_open_index_raises_when_missing_and_not_creating(tmp_path):
     with pytest.raises(FileNotFoundError):
         open_index(target, create=False)
     assert not target.exists()      # connect の副作用でファイルができていないこと
+
+
+def test_record_without_peaks_is_rejected_and_counted(conn):
+    """ピーク 0 本のレコードは索引に入れず、別枠で数える。
+
+    照合にも IDF の df にも寄与しないので入れる意味が無いうえ、accepted に
+    混ざるとパーサがピークを 1 本も拾えていない失敗が見えなくなる。
+    世代B の TTL 実物は未入手（spec §11 確認事項 1）で、実物の SIO ノードの
+    入れ子が想定と違えばこの状態がそのまま起きる。
+    """
+    writer = IndexWriter(conn, bin_width=0.01)
+    record = _record()
+    peakless = SpectrumRecord(**{**record.__dict__, "peaks": ()})
+    assert writer.add_record(peakless) is False
+    assert writer.n_no_peaks == 1
+    assert conn.execute("SELECT COUNT(*) FROM records").fetchone()[0] == 0
+
+
+def test_out_of_scope_record_is_not_counted_as_no_peaks(conn):
+    """層の条件で先に弾かれたレコードは no_peaks に数えない。
+
+    n_no_peaks は「本来入るはずだったのにピークが無い」件数でなければ、
+    診断の材料にならない。
+    """
+    writer = IndexWriter(conn, bin_width=0.01)
+    record = _record(instrument_type="LC-ESI-QQ")
+    peakless = SpectrumRecord(**{**record.__dict__, "peaks": ()})
+    assert writer.add_record(peakless) is False
+    assert writer.n_no_peaks == 0

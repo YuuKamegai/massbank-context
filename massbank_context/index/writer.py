@@ -82,6 +82,10 @@ class IndexWriter:
         self._conn = conn
         self._bin_width = bin_width
         self._resolution_filter = resolution_filter
+        #: 層の条件は満たすがピークが 1 本も無かったレコードの件数。
+        #: 「受け入れた件数」だけを報告すると、パーサがピークを 1 本も
+        #: 拾えていない状態でも索引ビルドは成功したように見える。
+        self.n_no_peaks = 0
 
     def add_record(self, record: SpectrumRecord) -> bool:
         """受け入れたら True、層の条件で弾いたら False を返す。"""
@@ -91,6 +95,14 @@ class IndexWriter:
             return False
         if (self._resolution_filter
                 and record.resolution_class != self._resolution_filter):
+            return False
+        if not record.peaks:
+            # ピークの無いレコードは照合にも IDF の df にも一切寄与しない。
+            # 入れても索引が無意味に膨らむだけで、しかも「受け入れた」件数に
+            # 混ざって、パーサがピークを拾えていない失敗を隠してしまう。
+            # 層の条件を通ったあとで数えるので、この件数は
+            # 「本来入るはずだったのにピークが無い」ものだけを指す。
+            self.n_no_peaks += 1
             return False
 
         cursor = self._conn.execute(

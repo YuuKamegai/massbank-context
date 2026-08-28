@@ -42,30 +42,43 @@ def measure_mass_error(
     """装置種別ごとの m/z 散らばりを返す。
 
     同一 (instrument_type, inchikey) のレコード群を集め、各ピークを
-    cluster_tolerance 内で貪欲にクラスタリングして、2 件以上のクラスタの
-    最大幅（max - min）を散らばりの標本とする。
+    cluster_tolerance 内で貪欲にクラスタリングして、**2 つ以上の異なる
+    レコード由来の m/z を含む**クラスタの最大幅（max - min）を散らばりの
+    標本とする。
+
+    「2 点以上」ではなく「2 レコード以上」であることが要点。測っているのは
+    同じフラグメントを別々に測ったときのばらつきであり、1 本のスペクトルの
+    中で近接している 2 本は単に別のフラグメントである。cluster_tolerance の
+    既定 0.05 は測ろうとしている誤差の 10 倍ほどあるため、その距離を装置誤差
+    として数えると、choose_bin_width が採る最大値経由で索引全体のビンが太る。
     """
-    grouped: dict[tuple[str, str], list[list[float]]] = defaultdict(list)
-    for record in records:
+    # m/z にレコードの識別子を付けて運ぶ。records 内の位置を使うのは、
+    # accession が欠けている・重複しているレコードでも必ず一意になるため。
+    grouped: dict[tuple[str, str], list[tuple[float, int]]] = defaultdict(list)
+    for record_index, record in enumerate(records):
         if not record.inchikey:
             continue
-        grouped[(_instrument_class(record), record.inchikey)].append(
-            sorted(peak.mz for peak in record.peaks))
+        grouped[(_instrument_class(record), record.inchikey)].extend(
+            (peak.mz, record_index) for peak in record.peaks)
+
+    def _flush(instrument: str, cluster: list[tuple[float, int]],
+               spreads: dict[str, list[float]]) -> None:
+        if len({record_index for _mz, record_index in cluster}) < 2:
+            return
+        spreads[instrument].append(cluster[-1][0] - cluster[0][0])
 
     spreads: dict[str, list[float]] = defaultdict(list)
-    for (instrument, _inchikey), spectra in grouped.items():
-        if len(spectra) < 2:
+    for (instrument, _inchikey), entries in grouped.items():
+        if len({record_index for _mz, record_index in entries}) < 2:
             continue
-        all_mz = sorted(mz for spectrum in spectra for mz in spectrum)
-        cluster: list[float] = []
-        for mz in all_mz:
-            if cluster and mz - cluster[0] > cluster_tolerance:
-                if len(cluster) >= 2:
-                    spreads[instrument].append(cluster[-1] - cluster[0])
+        cluster: list[tuple[float, int]] = []
+        for mz, record_index in sorted(entries):
+            if cluster and mz - cluster[0][0] > cluster_tolerance:
+                _flush(instrument, cluster, spreads)
                 cluster = []
-            cluster.append(mz)
-        if len(cluster) >= 2:
-            spreads[instrument].append(cluster[-1] - cluster[0])
+            cluster.append((mz, record_index))
+        if cluster:
+            _flush(instrument, cluster, spreads)
 
     profile: dict[str, list[tuple[float, float]]] = {}
     for instrument, values in spreads.items():

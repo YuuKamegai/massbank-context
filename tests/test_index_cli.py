@@ -116,3 +116,56 @@ def test_main_returns_zero(tmp_path, capsys):
                  "--output", str(tmp_path / "index.sqlite")])
     assert code == 0
     assert "accepted" in capsys.readouterr().out
+
+
+# --- 世代ごとの内訳とピーク 0 本の検出（finding 7 / 12） ---------------------
+
+#: 世代B と判定されるが、has_peak からは SIO ノードに辿り着けない TTL。
+#: 実物の世代B が想定と違う入れ子だった場合に起きる状態を再現する
+#: （spec §11 確認事項 1。同梱 fixture は編集せず、ここで組み立てる）。
+def _write_peakless_gen_b(ttl_dir: Path) -> None:
+    source = (FIXTURES / "gen_b" / "MSBNK-TEST-B0001.ttl").read_text(
+        encoding="utf-8")
+    text = (source.replace("MSBNK-TEST-B0001", "MSBNK-TEST-B0002")
+                  .replace("mbo:has_peak [", "mbo:has_peaks ["))
+    (ttl_dir / "MSBNK-TEST-B0002.ttl").write_text(text, encoding="utf-8")
+
+
+def test_build_index_reports_counts_per_generation(tmp_path):
+    """どの世代を何ファイル読み、ピークを何本拾ったかが一目で分かること。"""
+    stats = build_index(_ttl_dir(tmp_path), tmp_path / "index.sqlite")
+    assert stats["generations"] == {
+        "gen_a": {"files": 1, "records": 1, "peaks": 3},
+        "gen_b": {"files": 1, "records": 1, "peaks": 2},
+    }
+
+
+def test_build_index_counts_peakless_records_separately(tmp_path):
+    """ピーク 0 本のレコードは accepted に混ぜず no_peaks に数える。"""
+    ttl_dir = _ttl_dir(tmp_path)
+    _write_peakless_gen_b(ttl_dir)
+    stats = build_index(ttl_dir, tmp_path / "index.sqlite")
+    assert stats["parsed"] == 3
+    assert stats["accepted"] == 2
+    assert stats["no_peaks"] == 1
+    # 世代ごとの内訳を見れば、ピークを拾えていないのが gen_b 側だと分かる。
+    assert stats["generations"]["gen_b"] == {
+        "files": 2, "records": 2, "peaks": 2}
+
+
+def test_build_index_records_ttl_generation_in_meta(tmp_path):
+    """spec §6.7 の index_meta.ttl_generation。混在ビルドでは全部を記録する。"""
+    build_index(_ttl_dir(tmp_path), tmp_path / "index.sqlite")
+    conn = sqlite3.connect(str(tmp_path / "index.sqlite"))
+    meta = read_meta(conn)
+    conn.close()
+    assert meta["ttl_generation"] == "gen_a,gen_b"
+
+
+def test_build_index_logs_bin_width_at_info(tmp_path, caplog):
+    """採用ビン幅と装置クラス別プロファイルを運用者が目視できること。"""
+    with caplog.at_level("INFO", logger="massbank_context.index.__main__"):
+        build_index(_ttl_dir(tmp_path), tmp_path / "index.sqlite")
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("採用ビン幅" in message for message in messages)
+    assert any("TTL 世代 gen_a" in message for message in messages)
