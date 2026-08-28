@@ -1,2 +1,10 @@
 __pycache__/
 *.pyc
+
+# 構築済みの索引。core/config.py の既定が <repo>/index/massbank.sqlite で
+# 作業ツリーの中を指すため、放っておくと数百 MB の SQLite が git status に
+# 並び、事故で commit されうる。サイズだけの問題ではない: spec §4 が
+# ハイブリッド方式を採ったのは、再配布可能な MassBank の中身を成果物に
+# 焼き込まないためでもある（コーパスの一部は CC-BY）。
+index/
+*.sqlite
