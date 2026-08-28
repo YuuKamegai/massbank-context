@@ -10,6 +10,73 @@ from massbank_context.spectral.matcher import derive_band, match_spectrum
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ttl"
 
+# gen_a の構造を保ったまま、accession・InChIKey・precursor・ピーク列だけを
+# 差し替えた合成レコードを作るテンプレート。3 件目以降のレコードを増やすたびに
+# 巨大な文字列置換を書き足すのを避けるため、多候補用の conn_multi フィクスチャで使う。
+_TTL_TEMPLATE = """@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix inchikey: <http://identifiers.org/inchikey/> .
+@prefix massbank: <https://identifiers.org/massbank/> .
+@prefix mbo: <http://www.massbank.jp/ontology/> .
+@prefix obo: <http://purl.obolibrary.org/obo/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema: <https://schema.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+massbank:{accession} a mbo:MassSpectrum ;
+    dcterms:identifier "{accession}" ;
+    dcterms:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
+    mbo:analytical_methods_and_conditions [ a mbo:AnalyticalMethods ;
+            mbo:ac_instrument "LTQ Orbitrap XL Thermo Scientific" ;
+            mbo:collision_energy "35% (nominal)" ;
+            mbo:fragmentation_mode "CID" ;
+            mbo:instrument_type "LC-ESI-ITFT" ;
+            mbo:ion_mode "POSITIVE" ;
+            mbo:ms_type "MS2" ;
+            mbo:resolution "15000" ] ;
+    mbo:compound [ a schema:chemicalsubstance ;
+            rdfs:label "Test{accession}" ;
+            mbo:ch_compound_class "N/A; Environmental Standard" ;
+            mbo:ch_exact_mass 2.290479e+02 ;
+            schema:inChIKey inchikey:{inchikey} ;
+            schema:molecularFormula "C6H8ClN7O" ;
+            schema:name "Test{accession}" ] ;
+    {peak_block}
+    mbo:mass_spectram_meta_data [ a mbo:MassSpectramMetaData ;
+            mbo:base_peak 2.300551e+02 ;
+            mbo:precursor_mz_value "{precursor_mz}"^^xsd:float ;
+            mbo:precursor_type_value "[M+H]+" ] ;
+    mbo:pk_num_peak {n_peaks} ;
+    mbo:pk_splash "splash10-001i-0290000000-000000000000" .
+"""
+
+
+def _peak_block(peaks: list[tuple[float, float]]) -> str:
+    """[(mz, relative_intensity), ...] から mbo:has_peak ブロックを作る。
+
+    mbo:intensity は reader_gen_a が読まない列なので relative_intensity と
+    同じ値を入れておけば足りる。has_peak_annotations（tentative_formula）は
+    matcher が使わないため省略する（世代Aでもアノテーション無しレコードは
+    実在するので、これ自体が読み込み側の未検証経路にはならない）。
+    """
+    entries = ",\n        ".join(
+        f"[ mbo:intensity {intensity:.6e} ;\n"
+        f"            mbo:mz {mz:.6e} ;\n"
+        f"            mbo:peak_sequential_number {i} ;\n"
+        f"            mbo:relative_intensity {intensity:.0f} ]"
+        for i, (mz, intensity) in enumerate(peaks, start=1)
+    )
+    return f"mbo:has_peak {entries} ;"
+
+
+def _write_ttl_record(ttl_dir: Path, accession: str, inchikey: str,
+                      precursor_mz: float,
+                      peaks: list[tuple[float, float]]) -> None:
+    text = _TTL_TEMPLATE.format(
+        accession=accession, inchikey=inchikey, precursor_mz=precursor_mz,
+        peak_block=_peak_block(peaks), n_peaks=len(peaks))
+    (ttl_dir / f"{accession}.ttl").write_text(text, encoding="utf-8")
+
 
 @pytest.fixture()
 def conn(tmp_path):
@@ -67,6 +134,34 @@ def conn(tmp_path):
     connection.close()
 
 
+@pytest.fixture()
+def conn_multi(tmp_path):
+    """並び順・top_k の検証専用。候補が常に 1 件しかない conn とは別の索引にする。
+
+    conn の全テストは precursor 230.0552 だけを使い、conn の 2 件目
+    (precursor 600.0) は絶対に候補に入らないため、conn では並び順の比較子
+    （weighted_score 降順、accession でタイブレーク）も top_k の切り詰めも
+    1 要素のリストにしか触れず、実際には何も検証していなかった。
+    ここでは precursor 230.0552 の窓に 2 件（レコード1・レコード3）を落とし、
+    互いにスコアが異なるようにして初めて比較子を動かす。
+    """
+    ttl_dir = tmp_path / "ttl"
+    ttl_dir.mkdir()
+    shutil.copy(FIXTURES / "gen_a" / "MSBNK-TEST-A0001.ttl", ttl_dir)
+    # レコード2: precursor 600.0（候補窓の外）。IDF 背景に厚みを持たせるためだけに置く。
+    _write_ttl_record(ttl_dir, "MSBNK-TEST-A0002", "YYYYYYYYYYYYYY-UHFFFAOYSA-N",
+                      600.0, [(86.0349, 11.0), (300.0, 226.0)])
+    # レコード3: precursor 230.0552（レコード1と同じ窓）だが、171.0069 までしか
+    # 持たず 230.0552 を欠く。レコード1（フルマッチ）より必ず低いスコアになる。
+    _write_ttl_record(ttl_dir, "MSBNK-TEST-A0003", "ZZZZZZZZZZZZZZ-UHFFFAOYSA-N",
+                      230.0552, [(86.0349, 11.0), (171.0069, 226.0)])
+
+    build_index(ttl_dir, tmp_path / "index.sqlite")
+    connection = sqlite3.connect(str(tmp_path / "index.sqlite"))
+    yield connection
+    connection.close()
+
+
 def _query(peaks, precursor_mz=230.0552) -> QuerySpectrum:
     return QuerySpectrum(
         spectrum_id="q1", precursor_mz=precursor_mz, polarity="POSITIVE",
@@ -116,10 +211,20 @@ def test_polarity_mismatch_returns_nothing(conn):
 
 
 def test_boundary_peak_still_matches(conn):
-    """ビン境界をまたぐ僅かなずれでも ±1 探索で拾える（Task 5）。"""
+    """ビン境界をまたぐ僅かなずれでも ±1 探索で拾える（Task 5）。
+
+    cosine もカバレッジと同じ ±1 窓で対応を取る。ここでは両ピークとも境界を
+    またいで一致するので、cosine の内積が 0 のまま（対応漏れ）になっていない
+    ことを検証する。record 側の強度ベクトルは (11, 226, 999)、クエリ側は
+    一致した 2 本 (11, 226) だけが対応するので、
+        cosine = (11*11 + 226*226) / (sqrt(11^2+226^2) * sqrt(11^2+226^2+999^2))
+               = 51197 / (sqrt(51197) * sqrt(1049198))
+    """
     query = _query([(86.0350, 11.0), (171.0070, 226.0)])
     results = match_spectrum(conn, query, "LC-ESI-MS2")
     assert results[0].matched_fragments == 2
+    expected_cosine = 51197 / ((51197 ** 0.5) * (1049198 ** 0.5))
+    assert abs(results[0].cosine - expected_cosine) < 1e-9
 
 
 def test_unexplained_ratio_counts_query_peaks(conn):
@@ -165,3 +270,40 @@ def test_weighted_score_reflects_partial_coverage(conn):
     query = _query([(171.0069, 226.0), (300.0, 100.0)])
     results = match_spectrum(conn, query, "LC-ESI-MS2")
     assert abs(results[0].weighted_score - 0.5) < 1e-9
+
+
+def test_orders_multiple_candidates_by_weighted_score(conn_multi):
+    """候補が 2 件以上あるときに初めて比較子が働く。1 件では順序を検証できない。"""
+    query = _query([(86.0349, 11.0), (171.0069, 226.0), (230.0552, 999.0)])
+    results = match_spectrum(conn_multi, query, "LC-ESI-MS2")
+    assert len(results) >= 2
+    scores = [r.weighted_score for r in results]
+    assert scores == sorted(scores, reverse=True)
+    assert scores[0] > scores[-1]      # 同点でないこと＝比較子が実際に働いたこと
+
+
+def test_top_k_limits_results_with_multiple_candidates(conn_multi):
+    """候補が 2 件以上あるときに top_k の切り詰めを検証する。"""
+    query = _query([(86.0349, 11.0), (171.0069, 226.0), (230.0552, 999.0)])
+    all_results = match_spectrum(conn_multi, query, "LC-ESI-MS2")
+    assert len(all_results) == 2
+    limited = match_spectrum(conn_multi, query, "LC-ESI-MS2", top_k=1)
+    assert len(limited) == 1
+    assert limited[0].accession == all_results[0].accession
+
+
+def test_query_without_precursor_returns_all_records_in_class(conn):
+    """precursor が無いクエリは precursor で絞れない。曖昧なまま拒否せず全件を候補にする。"""
+    query = QuerySpectrum(spectrum_id="q", precursor_mz=None, polarity="POSITIVE",
+                          peaks=(Peak(86.0349, 11.0, None, None),), source="test")
+    results = match_spectrum(conn, query, "LC-ESI-MS2")
+    assert len(results) >= 1
+    assert all(r.precursor_delta is None for r in results)
+
+
+def test_query_without_precursor_or_polarity_does_not_filter_by_polarity(conn):
+    """polarity=None は「極性で絞らない」を意味する（.dcl の ion_mode=2 が正当に生む）。"""
+    query = QuerySpectrum(spectrum_id="q", precursor_mz=None, polarity=None,
+                          peaks=(Peak(86.0349, 11.0, None, None),), source="test")
+    results = match_spectrum(conn, query, "LC-ESI-MS2")
+    assert len(results) >= 1

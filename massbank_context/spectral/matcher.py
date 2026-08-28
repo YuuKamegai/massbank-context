@@ -16,7 +16,7 @@ import math
 import sqlite3
 from dataclasses import dataclass
 
-from massbank_context.core.binning import PRODUCT_ION, probe_bins, to_bin
+from massbank_context.core.binning import PRODUCT_ION, probe_bins
 from massbank_context.core.models import QuerySpectrum
 from massbank_context.index.background import lookup_idf
 from massbank_context.index.writer import read_meta
@@ -58,14 +58,23 @@ def derive_band(matched_product_ions: int) -> str:
     return BAND_PRECURSOR_ONLY
 
 
-def _cosine(query_intensities: dict[int, float],
-            record_intensities: dict[int, float]) -> float:
-    shared = set(query_intensities) & set(record_intensities)
-    if not shared:
+def _cosine(matched_pairs: list[tuple[float, float]],
+            query_values: list[float],
+            record_values: list[float]) -> float:
+    """modified cosine（照合と同じ ±1 窓で整列させた版）。
+
+    内積は「クエリのどのビンが record のどのビンに当たったか」という、
+    カバレッジ照合が既に持っている対応関係のみを使う（境界を挟んだ対応も含む）。
+    ノルムは対応の有無にかかわらず両者の全ピーク強度から取る。
+    probe_bins（±1）で拾える一致を to_bin の完全一致だけで鍵付けすると、
+    境界をまたいだピーク（カバレッジでは matched）が内積から抜け落ち、
+    照合窓と cosine の窓がずれる。
+    """
+    if not matched_pairs:
         return 0.0
-    dot = sum(query_intensities[b] * record_intensities[b] for b in shared)
-    norm_q = math.sqrt(sum(v * v for v in query_intensities.values()))
-    norm_r = math.sqrt(sum(v * v for v in record_intensities.values()))
+    dot = sum(q * r for q, r in matched_pairs)
+    norm_q = math.sqrt(sum(v * v for v in query_values))
+    norm_r = math.sqrt(sum(v * v for v in record_values))
     if norm_q == 0 or norm_r == 0:
         return 0.0
     return dot / (norm_q * norm_r)
@@ -103,8 +112,7 @@ def match_spectrum(conn: sqlite3.Connection,
     query_bins = [probe_bins(peak.mz, bin_width) for peak in spectrum.peaks]
     query_idf = [lookup_idf(conn, acquisition_class, PRODUCT_ION, bins)
                  for bins in query_bins]
-    query_intensities = {to_bin(peak.mz, bin_width): peak.relative_intensity
-                         for peak in spectrum.peaks}
+    query_values = [peak.relative_intensity for peak in spectrum.peaks]
     total_idf = sum(query_idf)
     total_peaks = len(spectrum.peaks)
 
@@ -118,10 +126,16 @@ def match_spectrum(conn: sqlite3.Connection,
         }
         matched_idf = 0.0
         matched = 0
-        for bins, idf in zip(query_bins, query_idf):
-            if any(b in record_bins for b in bins):
+        cosine_pairs: list[tuple[float, float]] = []
+        for peak, bins, idf in zip(spectrum.peaks, query_bins, query_idf):
+            # probe_bins（±1）の中で record が実際に持つビンを探す。カバレッジの
+            # matched 判定と同じ窓を使うことで、cosine が別の一致基準を持たない
+            # ようにする。複数当たっても二重計上しないよう最初の 1 つだけ使う。
+            hit_bin = next((b for b in bins if b in record_bins), None)
+            if hit_bin is not None:
                 matched += 1
                 matched_idf += idf
+                cosine_pairs.append((peak.relative_intensity, record_bins[hit_bin]))
 
         candidates.append(MatchCandidate(
             accession=accession,
@@ -129,7 +143,7 @@ def match_spectrum(conn: sqlite3.Connection,
             matched_fragments=matched,
             total_query_peaks=total_peaks,
             weighted_score=(matched_idf / total_idf) if total_idf > 0 else 0.0,
-            cosine=_cosine(query_intensities, record_bins),
+            cosine=_cosine(cosine_pairs, query_values, list(record_bins.values())),
             unexplained_peak_ratio=(
                 1.0 - matched / total_peaks) if total_peaks else 1.0,
             band=derive_band(matched),
