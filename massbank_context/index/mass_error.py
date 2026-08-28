@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import statistics
 from collections import defaultdict
 
 from massbank_context.core.models import SpectrumRecord
@@ -25,6 +24,8 @@ def _percentile(values: list[float], percentile: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
+    # round() は x.5 を偶数側に丸める（銀行家丸め）。n=2 のとき 50 パーセンタイルは
+    # round(0.5)=0 で常に小さいほうを選ぶ。補間しない設計なので許容する。
     index = min(len(ordered) - 1,
                 max(0, int(round(percentile / 100.0 * (len(ordered) - 1)))))
     return ordered[index]
@@ -91,6 +92,12 @@ def choose_bin_width(profile: dict[str, list[tuple[float, float]]],
         for pct, value in entries
         if pct == percentile and value > 0
     ]
+    # value > 0 は下流の前提条件を守るためのもので、単なる衛生ではない。
+    # core/binning.py の to_bin は bin_width <= 0 で ValueError を投げるため、
+    # ここで 0.0 を返すと索引ビルド全体が落ちる。
+    # 散らばりがちょうど 0 になるのは実在する: MassBank には同一化合物の
+    # 同一ピーク列を持つレコード（同じスペクトルの重複登録）が頻出する。
+    # その場合は「測定不能」と同じく fallback を返す — 幅 0 のビンは使えないため。
     if not candidates:
         return fallback
     return max(candidates)

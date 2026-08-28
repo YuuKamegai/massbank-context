@@ -70,5 +70,22 @@ def test_choose_bin_width_falls_back_when_empty():
     assert choose_bin_width({}) == 0.01
 
 
+def test_zero_spread_falls_back():
+    """散らばりがちょうど 0 のとき fallback を返す（幅 0 のビンは to_bin が拒否する）。
+
+    MassBank には同一化合物の同一ピーク列を持つレコードが頻出するため、
+    この経路は実際に踏まれる。
+    """
+    records = [
+        _record("A1", "IK1", [100.0, 200.0]),
+        _record("A2", "IK1", [100.0, 200.0]),  # 完全に同一
+    ]
+    profile = measure_mass_error(records)
+    # 測定自体は成立し、散らばり 0 が記録される
+    assert dict(profile["LC-ESI-QTOF"])[95.0] == 0.0
+    # しかしビン幅としては採用されず fallback になる
+    assert choose_bin_width(profile) == 0.01
+
+
 def test_percentiles_are_declared():
     assert MASS_ERROR_PERCENTILES == (50.0, 90.0, 95.0, 99.0)
