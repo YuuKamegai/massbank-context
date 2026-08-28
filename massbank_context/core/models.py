@@ -1,7 +1,7 @@
 """索引とクエリのデータモデル。依存グラフの leaf（classify のみ）。"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from massbank_context.core.classify import (
     derive_acquisition_class,

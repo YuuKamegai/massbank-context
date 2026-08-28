@@ -53,8 +53,11 @@ def test_json_payload_has_no_whitespace():
 
 
 def test_round_floats_preserves_bool():
-    assert round_floats({"x": 1.23456789, "flag": True}) == {
-        "x": 1.234568, "flag": True}
+    """bool は int の派生。数値として丸めると True が 1 に劣化する。"""
+    result = round_floats({"x": 1.23456789, "flag": True})
+    assert result["x"] == 1.234568
+    assert result["flag"] is True
+    assert type(result["flag"]) is bool
 
 
 def test_missing_index_envelope():
