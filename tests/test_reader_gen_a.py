@@ -1,9 +1,10 @@
+import logging
 from pathlib import Path
 
 import rdflib
 
 from massbank_context.ttl.generation import detect_generation
-from massbank_context.ttl.reader_gen_a import parse_gen_a
+from massbank_context.ttl.reader_gen_a import _number, parse_gen_a
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ttl" / "gen_a" / "MSBNK-TEST-A0001.ttl"
 
@@ -63,3 +64,28 @@ def test_layers_are_derived():
     rec = parse_gen_a(_graph())[0]
     assert rec.acquisition_class == "LC-ESI-MS2"
     assert rec.resolution_class == "high"
+
+
+def test_remaining_record_fields_are_read():
+    """fixture に値があるのにこれまで検証されていなかったフィールド。"""
+    rec = parse_gen_a(_graph())[0]
+    assert rec.collision_energy == "35% (nominal)"
+    assert rec.exact_mass == 229.0479
+    assert rec.compound_names == ("Amiloride",)
+    assert rec.ch_compound_class == "N/A; Environmental Standard"
+    assert rec.license is not None and "creativecommons.org" in rec.license
+
+
+def test_number_logs_warning_on_invalid_literal(caplog):
+    """値が存在するのに float に変換できない場合だけ warning を出す。
+
+    欠損（None）は正常系なので warning は出ない。異常なリテラルだけを
+    区別して記録できることを確認する。
+    """
+    with caplog.at_level(logging.WARNING,
+                          logger="massbank_context.ttl.reader_gen_a"):
+        assert _number("not-a-number") is None
+        assert _number(None) is None
+
+    assert len(caplog.records) == 1
+    assert "float に変換できない" in caplog.records[0].message

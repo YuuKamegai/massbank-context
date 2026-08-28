@@ -12,10 +12,14 @@ has_peak と has_peak_annotations は別ブロックなので m/z で突き合�
 """
 from __future__ import annotations
 
+import logging
+
 import rdflib
 
 from massbank_context.core.models import Peak, SpectrumRecord
 from massbank_context.ttl.generation import MBO, SCHEMA
+
+logger = logging.getLogger(__name__)
 
 #: m/z を突き合わせる際の丸め桁。TTL 内の同一ピークは同一リテラルなので
 #: 完全一致でよいが、指数表記の揺れを吸収するために丸めて鍵にする。
@@ -33,11 +37,19 @@ def _text(value) -> str | None:
 
 
 def _number(value) -> float | None:
+    """リテラルを float にする。欠損は None、変換不能も None を返す。
+
+    欠損（value が None）は正常。mbo:resolution は実測で約半数のレコードに無い。
+    一方「値はあるが float にできない」は上流データの異常であり、54,183 ファイルの
+    走査で黙って落ちると気付けないため、そちらだけ warning を出す。
+    例外は投げない — 不正リテラル 1 個でレコード全体を失うほうが損失が大きい。
+    """
     if value is None:
         return None
     try:
         return float(value)
     except (TypeError, ValueError):
+        logger.warning("float に変換できないリテラルを無視しました: %r", value)
         return None
 
 
