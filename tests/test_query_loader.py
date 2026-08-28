@@ -222,3 +222,17 @@ def test_dcl_peak_count_and_order(dcl_path):
 def test_dcl_base_peak_is_normalised_to_999(dcl_path):
     for spectrum in read_dcl(dcl_path):
         assert max(p.relative_intensity for p in spectrum.peaks) == 999.0
+
+
+def test_truncated_dcl_raises_value_error_naming_the_file(tmp_path):
+    """途中で切れた .dcl は struct.error ではなく ValueError にする（spec §8）。
+
+    struct.error は Exception 直下で ValueError の派生ではないため、
+    ツール層の except (OSError, ValueError) をすり抜けてトレースバックになる。
+    ビルド中断・コピー中断で実際に生じる状態なので、機械可読な封筒に載せられる
+    型へ変換する。ファイル名を必ず含める（どのファイルが壊れているか分かるため）。
+    """
+    path = tmp_path / "truncated.dcl"
+    path.write_bytes(_build_dcl_bytes(_DCL_RECORDS)[:30])
+    with pytest.raises(ValueError, match="truncated.dcl"):
+        read_dcl(path)

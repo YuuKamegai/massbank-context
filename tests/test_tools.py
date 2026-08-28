@@ -1,5 +1,6 @@
 import json
 import shutil
+import struct
 from pathlib import Path
 
 import pytest
@@ -104,3 +105,36 @@ def test_match_spectra_reports_bias_not_applied(tmp_path):
     payload = json.loads(match_spectra())
     assert payload["bias"]["applied"] is False
     assert payload["bias"]["reason"]
+
+
+def test_load_spectra_returns_envelope_for_truncated_dcl(tmp_path):
+    """壊れた .dcl はトレースバックではなく load_failed の封筒で返す（spec §8）。"""
+    # ヘッダは完全だが本体が無い .dcl（書き込み中断・コピー中断で生じる）。
+    # マジック 'DC' + version + has_annotation + レコード数 2 + seekpoint 2 個。
+    header = (b"DC" + struct.pack("<i", 1) + bytes(1) + struct.pack("<i", 2)
+              + struct.pack("<2q", 27, 200))
+    path = tmp_path / "truncated.dcl"
+    path.write_bytes(header)
+    payload = json.loads(load_spectra(str(path)))
+    assert payload["error"]["code"] == "load_failed"
+    assert "truncated.dcl" in payload["error"]["message"]
+
+
+def _write_non_sqlite_index():
+    """索引パスに SQLite でないファイルを置く（ビルド中断・コピー中断の再現）。"""
+    config.INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.INDEX_PATH.write_bytes(b"not a sqlite database at all" * 8)
+
+
+def test_index_status_reports_missing_index_for_corrupt_file():
+    """壊れた索引は使えない。CLI でしか直せないので missing_index を返す。"""
+    _write_non_sqlite_index()
+    payload = json.loads(index_status())
+    assert payload["error"]["code"] == "missing_index"
+
+
+def test_match_spectra_reports_missing_index_for_corrupt_file():
+    _write_non_sqlite_index()
+    load_spectra(str(MSP))
+    payload = json.loads(match_spectra())
+    assert payload["error"]["code"] == "missing_index"

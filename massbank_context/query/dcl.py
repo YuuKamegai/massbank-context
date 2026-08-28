@@ -38,7 +38,20 @@ def read_dcl(path: str | Path) -> list[QuerySpectrum]:
     raw = path.read_bytes()
     if raw[:2] != DCL_MAGIC:
         raise ValueError(f"{path} は .dcl 形式ではありません（先頭が 'DC' でない）。")
+    try:
+        return _parse_records(raw, path)
+    except (struct.error, IndexError) as exc:
+        # struct.error は Exception 直下で ValueError の派生ではない。そのまま
+        # 投げるとツール層の except (OSError, ValueError) をすり抜け、機械可読な
+        # 封筒（spec §8）ではなくトレースバックになる。書き込み中断やコピー中断で
+        # 実際に生じる状態なので、ここで契約に載る型へ変換する。
+        raise ValueError(
+            f"{path} の .dcl バイナリを読み切れませんでした"
+            f"（途中で切れているか、レイアウトが想定と異なります）: {exc}"
+        ) from exc
 
+
+def _parse_records(raw: bytes, path: Path) -> list[QuerySpectrum]:
     count = struct.unpack_from("<i", raw, 7)[0]
     seekpoints = struct.unpack_from(f"<{count}q", raw, 11)
 

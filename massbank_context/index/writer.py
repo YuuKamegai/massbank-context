@@ -52,7 +52,12 @@ def read_meta(conn: sqlite3.Connection) -> dict | None:
     """index_meta を dict にして返す。空なら None。"""
     try:
         rows = conn.execute("SELECT key, value FROM index_meta").fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.DatabaseError:
+        # OperationalError（表が無い＝未ビルド）の親を捕まえる。索引パスに
+        # SQLite でないファイルが在ると "file is not a database" の
+        # DatabaseError になり、ビルド中断・コピー中断で実際に生じる。
+        # どちらも「索引が使えない」であり、ツールでは直せないので、
+        # 呼び出し側は missing_index の封筒に落とす（spec §8）。
         return None
     if not rows:
         return None
