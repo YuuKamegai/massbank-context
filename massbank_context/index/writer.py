@@ -15,9 +15,19 @@ from massbank_context.core.models import SpectrumRecord
 from massbank_context.index.schema import DDL
 
 #: 化合物クラスとして意味をなさないラベル。実データに頻出する（spec §6.6）。
-_USELESS_CLASS_LABELS = frozenset({"N/A", "NA", "", "Environmental Standard"})
+#: 比較は大小文字非依存で行う（"N/A" と "n/a" のような表記ゆれを両方落とすため）。
+_USELESS_CLASS_LABELS = frozenset({"N/A", "NA", "", "ENVIRONMENTAL STANDARD"})
 
 _META_KEYS_JSON = frozenset({"acquisition_classes"})
+
+#: finalize() が DB / writer 自身の状態から導出するキー。caller が meta 引数で
+#: これらを渡してはならない。渡された値は索引の中身についての事実ではなく
+#: caller の主張にすぎず、無条件に上書きを許すと訂正1が閉じたバグ
+#: （メタデータが実際の索引の中身と食い違う）が別の経路で再発する。
+_DERIVED_META_KEYS = frozenset({
+    "n_records", "n_inchikey", "acquisition_classes", "bin_width",
+    "built_at", "resolution_filter",
+})
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -124,7 +134,7 @@ class IndexWriter:
         labels = []
         for part in raw.split(";"):
             label = part.strip()
-            if label and label not in _USELESS_CLASS_LABELS:
+            if label and label.upper() not in _USELESS_CLASS_LABELS:
                 labels.append(label)
         return labels
 
@@ -145,7 +155,17 @@ class IndexWriter:
         既存索引への再構築で INSERT OR IGNORE が無視した既存レコードが
         数に入らず、実際には数千件ある索引に n_records=0 と書いてしまう
         （このメタデータを読んだツールがその値を LLM にそのまま報告する）。
+
+        meta に _DERIVED_META_KEYS と衝突するキーがあれば ValueError を投げる。
+        DB から導出した事実を caller の文字列で黙って上書きさせない。
         """
+        conflicting = _DERIVED_META_KEYS & set(meta)
+        if conflicting:
+            raise ValueError(
+                f"meta に導出済みのキーを渡してはならない: {sorted(conflicting)}。"
+                "これらは DB と writer の状態から求める事実であり、上書きすると"
+                "索引の中身と食い違うメタデータが記録される。")
+
         n_records = self._conn.execute(
             "SELECT COUNT(*) FROM records").fetchone()[0]
         n_inchikey = self._conn.execute(

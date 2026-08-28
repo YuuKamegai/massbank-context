@@ -3,7 +3,9 @@ import sqlite3
 import pytest
 
 from massbank_context.core.models import Peak, SpectrumRecord
-from massbank_context.index.writer import IndexWriter, create_schema, read_meta
+from massbank_context.index.writer import (
+    IndexWriter, create_schema, open_index, read_meta,
+)
 
 
 def _record(accession="A1", inchikey="IK1", instrument_type="LC-ESI-QTOF",
@@ -77,19 +79,22 @@ def test_compound_class_is_split_on_semicolon(conn):
 
 
 def test_na_compound_class_is_not_stored(conn):
+    """'N/A; Environmental Standard' はどちらも無意味なラベルなので、
+    このレコードの compound_class 行は 1 行も作られない。"""
     writer = IndexWriter(conn, bin_width=0.01)
     record = _record()
     writer.add_record(SpectrumRecord(**{
         **record.__dict__, "ch_compound_class": "N/A; Environmental Standard"}))
-    labels = {row[0] for row in conn.execute("SELECT label FROM compound_class")}
-    assert "N/A" not in labels
+    rows = conn.execute(
+        "SELECT label FROM compound_class WHERE inchikey = ?",
+        (record.inchikey,)).fetchall()
+    assert rows == []
 
 
 def test_finalize_writes_meta(conn):
     writer = IndexWriter(conn, bin_width=0.004)
     writer.add_record(_record())
-    writer.finalize({"ttl_source": "/tmp/ttl", "ttl_generation": "gen_a",
-                     "resolution_filter": "high"})
+    writer.finalize({"ttl_source": "/tmp/ttl", "ttl_generation": "gen_a"})
     meta = read_meta(conn)
     assert meta["bin_width"] == 0.004
     assert meta["n_records"] == 1
@@ -110,14 +115,70 @@ def test_finalize_after_rebuild_counts_from_database(conn):
     """
     writer_a = IndexWriter(conn, bin_width=0.01)
     writer_a.add_record(_record())
-    writer_a.finalize({"resolution_filter": "high"})
+    writer_a.finalize({})
 
     # 別インスタンス（例: 再実行のプロセス）で同じレコードを再投入する。
     writer_b = IndexWriter(conn, bin_width=0.01)
     assert writer_b.add_record(_record()) is False  # 既存 accession なので無視される
-    writer_b.finalize({"resolution_filter": "high"})
+    writer_b.finalize({})
 
     meta = read_meta(conn)
     assert meta["n_records"] == 1
     assert meta["n_inchikey"] == 1
     assert meta["acquisition_classes"] == ["LC-ESI-MS2"]
+
+
+def test_finalize_rejects_derived_meta_keys(conn):
+    """n_records 等は DB から求める事実であり、caller が meta で主張してはならない。
+    渡された場合は黙って上書きせず、その場で ValueError を投げる。"""
+    writer = IndexWriter(conn, bin_width=0.01)
+    writer.add_record(_record())
+    with pytest.raises(ValueError, match="n_records"):
+        writer.finalize({"n_records": "999"})
+
+
+def test_write_mass_error_profile(conn):
+    writer = IndexWriter(conn, bin_width=0.01)
+    writer.write_mass_error_profile({
+        "LC-ESI-MS2": [(50.0, 0.001), (95.0, 0.004)],
+        "GC-EI-MS": [(50.0, 0.002)],
+    })
+    rows = set(conn.execute(
+        "SELECT instrument_class, percentile, delta_mz FROM mass_error_profile"
+        " ORDER BY instrument_class, percentile"))
+    assert rows == {
+        ("LC-ESI-MS2", 50.0, 0.001),
+        ("LC-ESI-MS2", 95.0, 0.004),
+        ("GC-EI-MS", 50.0, 0.002),
+    }
+
+
+def test_open_index_creates_missing_parent_directory(tmp_path):
+    """既定の索引パスの親はクリーンチェックアウトに存在しない。
+    sqlite3.connect() はディレクトリを作らないので open_index が作る（補正2）。"""
+    target = tmp_path / "does" / "not" / "exist" / "index.sqlite"
+    assert not target.parent.exists()
+    conn = open_index(target, create=True)
+    try:
+        assert target.parent.is_dir()
+        assert target.exists()
+    finally:
+        conn.close()
+
+
+def test_open_index_creates_schema_when_create(tmp_path):
+    conn = open_index(tmp_path / "index.sqlite", create=True)
+    try:
+        names = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "records" in names
+    finally:
+        conn.close()
+
+
+def test_open_index_raises_when_missing_and_not_creating(tmp_path):
+    """既存索引を開くつもりで空 DB を作ってしまう副作用を防ぐ。"""
+    target = tmp_path / "absent.sqlite"
+    with pytest.raises(FileNotFoundError):
+        open_index(target, create=False)
+    assert not target.exists()      # connect の副作用でファイルができていないこと
