@@ -27,6 +27,20 @@ BAND_PRECURSOR_ONLY = "PRECURSOR_ONLY"
 
 DEFAULT_PRECURSOR_TOLERANCE = 0.01
 
+#: 一致判定の窓をビン幅の何倍として表すか。クエリピークはまず中心ビン k に
+#: 落ち、探索は k-1..k+1 を見る。その 3 ビンが覆う m/z 範囲は
+#: [(k-1.5)*w, (k+1.5)*w) なので、ビン中心から見た窓はちょうど ±1.5*w になる。
+FRAGMENT_TOLERANCE_BINS = 1.5
+
+
+def fragment_tolerance(bin_width: float) -> float:
+    """±1 ビン探索の実効トレランスを Da で返す。
+
+    索引の bin_width だけを見せても「どれだけずれたピークまで一致とみなすのか」は
+    読み取れない。結果を再現・検算できるよう、この値をツールの戻り値に載せる。
+    """
+    return bin_width * FRAGMENT_TOLERANCE_BINS
+
 
 @dataclass(frozen=True)
 class MatchCandidate:
