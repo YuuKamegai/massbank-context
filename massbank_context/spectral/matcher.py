@@ -115,8 +115,8 @@ def match_spectrum(conn: sqlite3.Connection,
     # である（詳細は background.lookup_idf の docstring）。窓を 2 つの目的で
     # 使い分けているので、片方に合わせて統一しないこと。
     query_bins = [probe_bins(peak.mz, bin_width) for peak in spectrum.peaks]
-    query_idf = [lookup_idf(conn, acquisition_class, PRODUCT_ION,
-                            to_bin(peak.mz, bin_width))
+    query_idf = [lookup_idf(conn, acquisition_class, spectrum.polarity,
+                            PRODUCT_ION, to_bin(peak.mz, bin_width))
                  for peak in spectrum.peaks]
     query_values = [peak.relative_intensity for peak in spectrum.peaks]
     total_idf = sum(query_idf)

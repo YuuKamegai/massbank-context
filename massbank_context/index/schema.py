@@ -31,13 +31,18 @@ CREATE TABLE IF NOT EXISTS peaks (
     formula            TEXT
 );
 
+-- polarity は候補プールの絞り込み条件（spec §6.8 手順 1）なので、背景も同じ
+-- 軸で層別する。極性を跨いで数えた df は「いま探している集団の中での稀さ」に
+-- ならない。極性不明のクエリ（.dcl の ion_mode=2）はプールが両極性にまたがる
+-- ため、その背景として polarity='*'（POOLED_POLARITY）の行を別に持つ。
 CREATE TABLE IF NOT EXISTS axis_background (
     acquisition_class TEXT NOT NULL,
+    polarity          TEXT NOT NULL,
     axis              TEXT NOT NULL,
     bin               INTEGER NOT NULL,
     df_inchikey       INTEGER NOT NULL,
     idf               REAL NOT NULL,
-    PRIMARY KEY (acquisition_class, axis, bin)
+    PRIMARY KEY (acquisition_class, polarity, axis, bin)
 );
 
 CREATE TABLE IF NOT EXISTS compound_class (

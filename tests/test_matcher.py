@@ -1,3 +1,4 @@
+import math
 import shutil
 import sqlite3
 from pathlib import Path
@@ -31,7 +32,7 @@ massbank:{accession} a mbo:MassSpectrum ;
             mbo:collision_energy "35% (nominal)" ;
             mbo:fragmentation_mode "CID" ;
             mbo:instrument_type "LC-ESI-ITFT" ;
-            mbo:ion_mode "POSITIVE" ;
+            mbo:ion_mode "{ion_mode}" ;
             mbo:ms_type "MS2" ;
             mbo:resolution "15000" ] ;
     mbo:compound [ a schema:chemicalsubstance ;
@@ -71,10 +72,11 @@ def _peak_block(peaks: list[tuple[float, float]]) -> str:
 
 def _write_ttl_record(ttl_dir: Path, accession: str, inchikey: str,
                       precursor_mz: float,
-                      peaks: list[tuple[float, float]]) -> None:
+                      peaks: list[tuple[float, float]],
+                      ion_mode: str = "POSITIVE") -> None:
     text = _TTL_TEMPLATE.format(
         accession=accession, inchikey=inchikey, precursor_mz=precursor_mz,
-        peak_block=_peak_block(peaks), n_peaks=len(peaks))
+        peak_block=_peak_block(peaks), n_peaks=len(peaks), ion_mode=ion_mode)
     (ttl_dir / f"{accession}.ttl").write_text(text, encoding="utf-8")
 
 
@@ -326,3 +328,98 @@ def test_query_without_precursor_or_polarity_does_not_filter_by_polarity(conn):
     assert [r.accession for r in results] == [
         "MSBNK-TEST-A0001", "MSBNK-TEST-A0002"]
     assert all(r.precursor_delta is None for r in results)
+
+
+# --- 極性混在の索引（finding 3 / 4 / 5） -------------------------------------
+
+
+@pytest.fixture()
+def conn_mixed(tmp_path):
+    """POSITIVE と NEGATIVE が混ざった索引。
+
+    他のフィクスチャは全レコードが POSITIVE なので、
+      - POSITIVE のクエリが NEGATIVE のレコードを拾わないこと
+      - polarity=None のクエリが両極性を拾うこと
+      - polarity=None の重みが極性プール "*" の行から来ていること
+    のいずれも実際には検証できない（結果が同じになるため）。
+
+    配置（bin_width は実測できず fallback 0.01）:
+      A0001 POSITIVE precursor 230.0552  peaks 86.0349 / 171.0069 / 230.0552
+      A0004 NEGATIVE precursor 230.0552  peaks 86.0349 / 300.0
+      A0002 POSITIVE precursor 600.0     peaks 86.0349 / 300.0   （背景の厚み用）
+    """
+    ttl_dir = tmp_path / "ttl"
+    ttl_dir.mkdir()
+    shutil.copy(FIXTURES / "gen_a" / "MSBNK-TEST-A0001.ttl", ttl_dir)
+    _write_ttl_record(ttl_dir, "MSBNK-TEST-A0002", "YYYYYYYYYYYYYY-UHFFFAOYSA-N",
+                      600.0, [(86.0349, 11.0), (300.0, 226.0)])
+    _write_ttl_record(ttl_dir, "MSBNK-TEST-A0004", "NNNNNNNNNNNNNN-UHFFFAOYSA-N",
+                      230.0552, [(86.0349, 11.0), (300.0, 226.0)],
+                      ion_mode="NEGATIVE")
+
+    build_index(ttl_dir, tmp_path / "index.sqlite")
+    connection = sqlite3.connect(str(tmp_path / "index.sqlite"))
+    yield connection
+    connection.close()
+
+
+def test_positive_query_does_not_return_negative_records(conn_mixed):
+    """極性は候補プールの絞り込み条件。POSITIVE のクエリに NEGATIVE は出ない。"""
+    query = _query([(86.0349, 11.0)])
+    results = match_spectrum(conn_mixed, query, "LC-ESI-MS2")
+    assert [r.accession for r in results] == ["MSBNK-TEST-A0001"]
+
+
+def test_polarity_none_query_returns_both_polarities(conn_mixed):
+    """polarity=None は「極性で絞らない」。両極性のレコードが候補になる。"""
+    query = QuerySpectrum(spectrum_id="q", precursor_mz=230.0552, polarity=None,
+                          peaks=(Peak(86.0349, 11.0, None, None),),
+                          source="test")
+    results = match_spectrum(conn_mixed, query, "LC-ESI-MS2")
+    assert {r.accession for r in results} == {
+        "MSBNK-TEST-A0001", "MSBNK-TEST-A0004"}
+    polarities = {
+        row[0] for row in conn_mixed.execute(
+            "SELECT polarity FROM records WHERE accession IN (?,?)",
+            tuple(r.accession for r in results))}
+    assert polarities == {"POSITIVE", "NEGATIVE"}
+
+
+def test_polarity_none_weights_come_from_the_pooled_background(conn_mixed):
+    """極性不明クエリの重みは、プール "*"（全極性）の行から来なければならない。
+
+    候補プールが両極性にまたがるのに背景が片極性だと、idf が「いま探している
+    集団の中での稀さ」を意味しなくなる。
+
+    クエリのピークは 171.0069（bin 17101）と 300.0（bin 30000）。
+      プール "*" (N=3): bin 17101 -> A0001 のみ(df=1, idf=log3)
+                        bin 30000 -> A0002 と A0004(df=2, idf=log(3/2))
+      POSITIVE プール (N=2): 両ビンとも df=1 -> idf=log2 で等しく、
+                        weighted_score はちょうど 0.5 になってしまう。
+    A0001 は 171.0069 だけ一致するので、正しい値は log3/(log3+log(3/2))。
+    """
+    query = QuerySpectrum(spectrum_id="q", precursor_mz=230.0552, polarity=None,
+                          peaks=(Peak(171.0069, 226.0, None, None),
+                                 Peak(300.0, 100.0, None, None)),
+                          source="test")
+    results = match_spectrum(conn_mixed, query, "LC-ESI-MS2")
+    top = next(r for r in results if r.accession == "MSBNK-TEST-A0001")
+    expected = math.log(3) / (math.log(3) + math.log(3 / 2))
+    assert abs(top.weighted_score - expected) < 1e-9
+    assert abs(top.weighted_score - 0.5) > 0.1      # 片極性の背景ではない
+
+
+def test_positive_query_weights_come_from_the_positive_pool(conn_mixed):
+    """極性を指定したクエリの重みは、その極性のプールだけで数えた行から来る。
+
+    上のテストと同じ 2 ピークのクエリを POSITIVE で投げる。候補は A0001 だけ。
+      POSITIVE プール (N=2): bin 17101 -> A0001 のみ, bin 30000 -> A0002 のみ。
+      どちらも df=1 で idf=log2 なので、171.0069 だけ一致する A0001 は
+      ちょうど 0.5 になる。
+    層別しない（＝極性混合 N=3）背景を引くと log3/(log3+log(3/2))≒0.73 になり、
+    この値にはならない。
+    """
+    query = _query([(171.0069, 226.0), (300.0, 100.0)])
+    results = match_spectrum(conn_mixed, query, "LC-ESI-MS2")
+    assert [r.accession for r in results] == ["MSBNK-TEST-A0001"]
+    assert abs(results[0].weighted_score - 0.5) < 1e-9

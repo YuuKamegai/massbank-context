@@ -14,7 +14,12 @@ from __future__ import annotations
 import rdflib
 
 from massbank_context.core.models import Peak, SpectrumRecord
-from massbank_context.ttl._literals import _number, _one, _text
+from massbank_context.ttl._literals import (
+    _number,
+    _one,
+    _polarity,
+    _text,
+)
 from massbank_context.ttl.generation import MBO, SCHEMA, SIO, SIO_HAS_VALUE
 
 SIO_HAS_ATTRIBUTE = SIO["SIO_000255"]
@@ -80,7 +85,7 @@ def _parse_one(graph: rdflib.Graph, subject) -> SpectrumRecord:
         if meta is not None else None,
         precursor_type=_text(_one(graph, meta, MBO["precursor_type_value"]))
         if meta is not None else None,
-        polarity=_text(_one(graph, conditions, MBO["ion_mode"]))
+        polarity=_polarity(_one(graph, conditions, MBO["ion_mode"]))
         if conditions is not None else None,
         instrument_type=_text(_one(graph, conditions, MBO["instrument_type"]))
         if conditions is not None else None,

@@ -3,7 +3,11 @@ import sqlite3
 
 import pytest
 
-from massbank_context.index.background import build_background, lookup_idf
+from massbank_context.index.background import (
+    POOLED_POLARITY,
+    build_background,
+    lookup_idf,
+)
 from massbank_context.index.writer import create_schema
 
 
@@ -16,11 +20,11 @@ def conn():
 
 
 def _insert(conn, accession, inchikey, bins, axis="product_ion",
-            acquisition_class="LC-ESI-MS2"):
+            acquisition_class="LC-ESI-MS2", polarity="POSITIVE"):
     cursor = conn.execute(
         "INSERT INTO records (accession, inchikey, acquisition_class,"
-        " resolution_class, polarity) VALUES (?,?,?,'high','POSITIVE')",
-        (accession, inchikey, acquisition_class))
+        " resolution_class, polarity) VALUES (?,?,?,'high',?)",
+        (accession, inchikey, acquisition_class, polarity))
     for bin_no in bins:
         conn.execute(
             "INSERT INTO peaks (record_id, axis, bin, relative_intensity)"
@@ -83,7 +87,7 @@ def test_lookup_idf_returns_nonzero_value(conn):
     _insert(conn, "B1", "IK2", [1000])
     _insert(conn, "C1", "IK3", [5000])
     build_background(conn)
-    value = lookup_idf(conn, "LC-ESI-MS2", "product_ion", 1000)
+    value = lookup_idf(conn, "LC-ESI-MS2", "POSITIVE", "product_ion", 1000)
     assert value > 0
 
 
@@ -112,13 +116,13 @@ def test_ubiquitous_query_bin_weighs_nothing(conn):
     当たるピークが最大重みを受け取る。
     """
     _four_inchikey_layout(conn)
-    assert lookup_idf(conn, "LC-ESI-MS2", "product_ion", 1001) == 0.0
+    assert lookup_idf(conn, "LC-ESI-MS2", "POSITIVE", "product_ion", 1001) == 0.0
 
 
 def test_rare_query_bin_weighs_log_n(conn):
     """N 件中 1 件しか持たないビンに落ちるクエリピークは log(N)。"""
     _four_inchikey_layout(conn)
-    value = lookup_idf(conn, "LC-ESI-MS2", "product_ion", 1003)
+    value = lookup_idf(conn, "LC-ESI-MS2", "POSITIVE", "product_ion", 1003)
     assert abs(value - math.log(4)) < 1e-9
 
 
@@ -137,4 +141,80 @@ def test_ubiquitous_fragment_is_written_with_zero_idf(conn):
 def test_lookup_idf_returns_zero_for_unknown_bin(conn):
     _insert(conn, "A1", "IK1", [1000])
     build_background(conn)
-    assert lookup_idf(conn, "LC-ESI-MS2", "product_ion", 90000) == 0.0
+    assert lookup_idf(conn, "LC-ESI-MS2", "POSITIVE", "product_ion", 90000) == 0.0
+
+
+# --- 極性による層別（spec §6.8 手順 1） --------------------------------------
+#
+# 候補プールは (acquisition_class, polarity) で絞られる。重みの出所である
+# 背景がそれと違う集団（極性混合）だと、「いま探している集団の中での稀さ」
+# という idf の意味そのものが壊れる。
+
+
+def _mixed_polarity_layout(conn):
+    """POSITIVE 2 件・NEGATIVE 1 件。プールごとに df/N が変わる配置。
+
+      POSITIVE プール (N=2): bin 1000 -> IK1 のみ, bin 2000 -> IK2 のみ
+      NEGATIVE プール (N=1): bin 1000 -> IK3 のみ
+      プール "*"    (N=3): bin 1000 -> IK1,IK3, bin 2000 -> IK2
+    """
+    _insert(conn, "P1", "IK1", [1000], polarity="POSITIVE")
+    _insert(conn, "P2", "IK2", [2000], polarity="POSITIVE")
+    _insert(conn, "N1", "IK3", [1000], polarity="NEGATIVE")
+    build_background(conn)
+
+
+def test_background_is_stratified_by_polarity(conn):
+    _mixed_polarity_layout(conn)
+    polarities = {row[0] for row in conn.execute(
+        "SELECT DISTINCT polarity FROM axis_background")}
+    assert polarities == {"POSITIVE", "NEGATIVE", POOLED_POLARITY}
+
+
+def test_polarity_stratified_idf_uses_only_its_own_pool(conn):
+    """POSITIVE プールでは bin 1000 は 2 件中 1 件 -> log(2)。"""
+    _mixed_polarity_layout(conn)
+    assert abs(lookup_idf(conn, "LC-ESI-MS2", "POSITIVE", "product_ion", 1000)
+               - math.log(2)) < 1e-9
+    # NEGATIVE プールは 1 件中 1 件なので何も弁別しない。
+    assert lookup_idf(conn, "LC-ESI-MS2", "NEGATIVE", "product_ion", 1000) == 0.0
+
+
+def test_pooled_row_covers_all_polarities(conn):
+    """極性不明のクエリ（.dcl の ion_mode=2）のプールは両極性にまたがる。
+
+    その背景も両極性をまたいだ集団で数えた行でなければならない。
+    """
+    _mixed_polarity_layout(conn)
+    row = conn.execute(
+        "SELECT df_inchikey, idf FROM axis_background"
+        " WHERE polarity=? AND axis='product_ion' AND bin=1000",
+        (POOLED_POLARITY,)).fetchone()
+    assert row[0] == 2                               # IK1(POS) と IK3(NEG)
+    assert abs(row[1] - math.log(3 / 2)) < 1e-9      # N=3
+
+
+def test_lookup_idf_with_polarity_none_uses_pooled_rows(conn):
+    _mixed_polarity_layout(conn)
+    assert abs(lookup_idf(conn, "LC-ESI-MS2", None, "product_ion", 1000)
+               - math.log(3 / 2)) < 1e-9
+
+
+def test_polarity_less_record_is_counted_only_in_the_pooled_rows(conn):
+    """polarity NULL のレコードは極性で絞ったプールからは引けない。
+
+    候補側のクエリ（polarity=? OR ? IS NULL）が NULL 極性のレコードを
+    POSITIVE クエリで拾わない以上、背景側も拾ってはならない。
+    """
+    _insert(conn, "P1", "IK1", [1000], polarity="POSITIVE")
+    _insert(conn, "U1", "IK2", [1000], polarity=None)
+    build_background(conn)
+    positive = conn.execute(
+        "SELECT df_inchikey FROM axis_background"
+        " WHERE polarity='POSITIVE' AND axis='product_ion' AND bin=1000").fetchone()
+    pooled = conn.execute(
+        "SELECT df_inchikey FROM axis_background"
+        " WHERE polarity=? AND axis='product_ion' AND bin=1000",
+        (POOLED_POLARITY,)).fetchone()
+    assert positive[0] == 1
+    assert pooled[0] == 2

@@ -90,3 +90,20 @@ def test_number_logs_warning_on_invalid_literal(caplog):
 
     assert len(caplog.records) == 1
     assert "float に変換できない" in caplog.records[0].message
+
+
+def test_polarity_is_normalised_to_upper_case(tmp_path):
+    """mbo:ion_mode の表記ゆれを索引側の表記に揃える。
+
+    照合は records.polarity をクエリ側の "POSITIVE"/"NEGATIVE" と等値比較する。
+    生のまま格納すると、TTL 側が "Positive" と書いた瞬間に、そのレコードへの
+    照会が黙って 0 件になる（エラーにならないので誰も気付けない）。
+    同梱 fixture は編集せず、テスト内で TTL を組み立てて確かめる。
+    """
+    source = FIXTURE.read_text(encoding="utf-8").replace(
+        'mbo:ion_mode "POSITIVE"', 'mbo:ion_mode "Positive"')
+    path = tmp_path / "lowercase.ttl"
+    path.write_text(source, encoding="utf-8")
+    graph = rdflib.Graph()
+    graph.parse(path, format="turtle")
+    assert parse_gen_a(graph)[0].polarity == "POSITIVE"

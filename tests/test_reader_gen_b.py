@@ -82,3 +82,12 @@ def test_read_ttl_file_returns_empty_for_unknown(tmp_path):
     path = tmp_path / "empty.ttl"
     path.write_text("@prefix ex: <http://example.org/> .\n", encoding="utf-8")
     assert read_ttl_file(path) == []
+
+
+def test_polarity_is_normalised_to_upper_case(tmp_path):
+    """世代B も同様に極性を正規化する（世代Aのテストと同じ理由）。"""
+    source = GEN_B.read_text(encoding="utf-8").replace(
+        'mbo:ion_mode "NEGATIVE"', 'mbo:ion_mode "negative"')
+    path = tmp_path / "lowercase.ttl"
+    path.write_text(source, encoding="utf-8")
+    assert parse_gen_b(_graph(path))[0].polarity == "NEGATIVE"

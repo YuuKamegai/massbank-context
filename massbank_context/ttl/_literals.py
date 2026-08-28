@@ -39,3 +39,18 @@ def _number(value) -> float | None:
     except (TypeError, ValueError):
         logger.warning("float に変換できないリテラルを無視しました: %r", value)
         return None
+
+
+def _polarity(value) -> str | None:
+    """mbo:ion_mode を索引の表記（大文字）に正規化する。
+
+    照合は records.polarity をクエリ側の "POSITIVE" / "NEGATIVE" と等値で
+    比べる（spec §6.8 手順 1）。生のまま格納すると、TTL 側が "Positive" と
+    書いた瞬間にそのレコードへの照会が黙って 0 件になる。エラーにならないので
+    誰も気付けない類の失敗であり、書き込み時に潰す。
+    ms_type を classify.py が strip().upper() しているのと同じ扱いに揃える。
+    """
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    return text or None
