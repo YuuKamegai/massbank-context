@@ -55,17 +55,26 @@ def build_background(conn: sqlite3.Connection) -> int:
 
 
 def lookup_idf(conn: sqlite3.Connection, acquisition_class: str, axis: str,
-               bins: tuple[int, ...]) -> float:
-    """探索ビン群の idf のうち最大値を返す。該当が無ければ 0.0。
+               bin_no: int) -> float:
+    """クエリピークが落ちた**中心ビン 1 つ**の idf を返す。該当が無ければ 0.0。
 
-    最大を採るのは、隣接ビンのうち最も稀な（＝情報量の大きい）ビンで
-    ヒットしうるため。合計にすると同じフラグメントを重複計上する。
+    ここで ±1 に広げてはならない。build_background() が既に各レコードピークを
+    ±1 に展開して数えているため、bin k の行は「bin k のクエリピークが ±1 探索で
+    当たる unique InChIKey 数」そのものである。すなわち中心ビン 1 行が、
+    そのクエリピークの当たりやすさの確率そのものを表している。
+
+    ここで再び (k-1, k, k+1) を引いて MAX(idf)（＝MIN(df)）を採ると、展開済みの
+    表の上でもう一度展開することになり、実質 ±2 の窓になる。その結果、
+    全 InChIKey に当たるビン（idf=0、何も弁別しない）のクエリピークが、
+    たまたま隣にある稀なビンの重みを継承して最大重みを受け取る。
+    weighted_score は Σ idf(matched) / Σ idf(query_peaks) なので、これは
+    クエリピーク**間**の重み配分を歪め、候補の並び順を変える。
+
+    照合そのものは probe_bins() で ±1 を探り続ける（境界損失を防ぐため）。
+    変わるのは重みの引き方だけであり、両者を混同しないこと。
     """
-    if not bins:
-        return 0.0
-    placeholders = ",".join("?" for _ in bins)
     row = conn.execute(
-        "SELECT MAX(idf) FROM axis_background"
-        f" WHERE acquisition_class=? AND axis=? AND bin IN ({placeholders})",
-        (acquisition_class, axis, *bins)).fetchone()
+        "SELECT idf FROM axis_background"
+        " WHERE acquisition_class=? AND axis=? AND bin=?",
+        (acquisition_class, axis, bin_no)).fetchone()
     return float(row[0]) if row and row[0] is not None else 0.0

@@ -83,15 +83,18 @@ def test_lookup_idf_returns_nonzero_value(conn):
     _insert(conn, "B1", "IK2", [1000])
     _insert(conn, "C1", "IK3", [5000])
     build_background(conn)
-    value = lookup_idf(conn, "LC-ESI-MS2", "product_ion", (999, 1000, 1001))
+    value = lookup_idf(conn, "LC-ESI-MS2", "product_ion", 1000)
     assert value > 0
 
 
-def test_lookup_idf_returns_max_not_sum_of_probe_bins(conn):
-    """探索ビンの idf は最大を採る。合計にすると同じフラグメントを重複計上する。
+def _four_inchikey_layout(conn):
+    """IK1..IK3 が bin 1000、IK4 が bin 1002。N=4。
 
-    ±1 展開後の df がビンごとに異なる配置にしないと、MAX と SUM の差が
-    定数倍にしかならず、SUM への退行を検出できない。
+    ±1 展開後の各行の意味:
+      bin 1000: IK1..IK3           (df=3)
+      bin 1001: IK1..IK3 + IK4     (df=4)  ← 全 InChIKey が当たる
+      bin 1002: IK4                (df=1)
+      bin 1003: IK4                (df=1)  ← 4 件中 1 件しか当たらない
     """
     _insert(conn, "A1", "IK1", [1000])
     _insert(conn, "A2", "IK2", [1000])
@@ -99,10 +102,23 @@ def test_lookup_idf_returns_max_not_sum_of_probe_bins(conn):
     _insert(conn, "A4", "IK4", [1002])
     build_background(conn)
 
-    # 展開後: bin 1001 は IK1..IK4 の 4 件(df=4, idf=log(4/4)=0)、
-    #         bin 1002 と 1003 は IK4 のみ(df=1, idf=log(4/1))。
-    # 探索 (1001, 1002, 1003) の MAX は log(4)、SUM は 2*log(4) で明確に異なる。
-    value = lookup_idf(conn, "LC-ESI-MS2", "product_ion", (1001, 1002, 1003))
+
+def test_ubiquitous_query_bin_weighs_nothing(conn):
+    """全 InChIKey が持つビンに落ちるクエリピークは何も弁別しない＝ idf 0.0。
+
+    背景表は既に ±1 展開済みなので、bin 1001 の行は「bin 1001 のクエリピークが
+    ±1 探索で当たる InChIKey 数」そのものである。ここで再度 ±1 に広げると
+    最も稀な隣（bin 1002 の df=1）の重みを継承してしまい、4 件中 4 件に
+    当たるピークが最大重みを受け取る。
+    """
+    _four_inchikey_layout(conn)
+    assert lookup_idf(conn, "LC-ESI-MS2", "product_ion", 1001) == 0.0
+
+
+def test_rare_query_bin_weighs_log_n(conn):
+    """N 件中 1 件しか持たないビンに落ちるクエリピークは log(N)。"""
+    _four_inchikey_layout(conn)
+    value = lookup_idf(conn, "LC-ESI-MS2", "product_ion", 1003)
     assert abs(value - math.log(4)) < 1e-9
 
 
@@ -121,4 +137,4 @@ def test_ubiquitous_fragment_is_written_with_zero_idf(conn):
 def test_lookup_idf_returns_zero_for_unknown_bin(conn):
     _insert(conn, "A1", "IK1", [1000])
     build_background(conn)
-    assert lookup_idf(conn, "LC-ESI-MS2", "product_ion", (90000,)) == 0.0
+    assert lookup_idf(conn, "LC-ESI-MS2", "product_ion", 90000) == 0.0

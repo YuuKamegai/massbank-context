@@ -16,7 +16,7 @@ import math
 import sqlite3
 from dataclasses import dataclass
 
-from massbank_context.core.binning import PRODUCT_ION, probe_bins
+from massbank_context.core.binning import PRODUCT_ION, probe_bins, to_bin
 from massbank_context.core.models import QuerySpectrum
 from massbank_context.index.background import lookup_idf
 from massbank_context.index.writer import read_meta
@@ -109,9 +109,15 @@ def match_spectrum(conn: sqlite3.Connection,
         return []
 
     # --- クエリ側のビンと idf を先に用意する ---
+    # 一致判定は probe_bins（±1）で探る。境界を挟んだ相手を取りこぼさないため。
+    # 一方 idf は中心ビン 1 つだけを引く。背景表は既に ±1 展開済みで、
+    # 中心ビンの行が「このクエリピークが ±1 探索で当たる InChIKey 数」だから
+    # である（詳細は background.lookup_idf の docstring）。窓を 2 つの目的で
+    # 使い分けているので、片方に合わせて統一しないこと。
     query_bins = [probe_bins(peak.mz, bin_width) for peak in spectrum.peaks]
-    query_idf = [lookup_idf(conn, acquisition_class, PRODUCT_ION, bins)
-                 for bins in query_bins]
+    query_idf = [lookup_idf(conn, acquisition_class, PRODUCT_ION,
+                            to_bin(peak.mz, bin_width))
+                 for peak in spectrum.peaks]
     query_values = [peak.relative_intensity for peak in spectrum.peaks]
     total_idf = sum(query_idf)
     total_peaks = len(spectrum.peaks)
