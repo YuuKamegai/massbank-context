@@ -64,10 +64,15 @@ CREATE TABLE IF NOT EXISTS index_meta (
     value TEXT NOT NULL
 );
 
+-- n_records / n_samples は監査用。ビン幅の採否は標本数で決まる
+-- （mass_error.MIN_MASS_ERROR_SAMPLES）ため、値だけ残すと「測ったが
+-- 使わなかったクラス」を後から区別できない。
 CREATE TABLE IF NOT EXISTS mass_error_profile (
     instrument_class TEXT NOT NULL,
     percentile       REAL NOT NULL,
     delta_mz         REAL NOT NULL,
+    n_records        INTEGER NOT NULL DEFAULT 0,
+    n_samples        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (instrument_class, percentile)
 );
 

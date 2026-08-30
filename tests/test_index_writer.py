@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from massbank_context.core.models import Peak, SpectrumRecord
+from massbank_context.index.mass_error import InstrumentErrorProfile
 from massbank_context.index.writer import (
     IndexWriter, create_schema, open_index, read_meta,
 )
@@ -138,18 +139,27 @@ def test_finalize_rejects_derived_meta_keys(conn):
 
 
 def test_write_mass_error_profile(conn):
+    """測った値と一緒に、それを支える標本数も残す。
+
+    ビン幅の採否は標本数で決まる（MIN_MASS_ERROR_SAMPLES）。数字だけ残して
+    標本数を捨てると、「測ったが使わなかったクラス」を後から区別できない。
+    """
     writer = IndexWriter(conn, bin_width=0.01)
     writer.write_mass_error_profile({
-        "LC-ESI-MS2": [(50.0, 0.001), (95.0, 0.004)],
-        "GC-EI-MS": [(50.0, 0.002)],
+        "LC-ESI-MS2": InstrumentErrorProfile(
+            "LC-ESI-MS2", n_records=40, n_samples=900,
+            percentiles=((50.0, 0.001), (95.0, 0.004))),
+        "GC-EI-MS": InstrumentErrorProfile(
+            "GC-EI-MS", n_records=3, n_samples=12,
+            percentiles=((50.0, 0.002),)),
     })
     rows = set(conn.execute(
-        "SELECT instrument_class, percentile, delta_mz FROM mass_error_profile"
-        " ORDER BY instrument_class, percentile"))
+        "SELECT instrument_class, percentile, delta_mz, n_records, n_samples"
+        " FROM mass_error_profile"))
     assert rows == {
-        ("LC-ESI-MS2", 50.0, 0.001),
-        ("LC-ESI-MS2", 95.0, 0.004),
-        ("GC-EI-MS", 50.0, 0.002),
+        ("LC-ESI-MS2", 50.0, 0.001, 40, 900),
+        ("LC-ESI-MS2", 95.0, 0.004, 40, 900),
+        ("GC-EI-MS", 50.0, 0.002, 3, 12),
     }
 
 

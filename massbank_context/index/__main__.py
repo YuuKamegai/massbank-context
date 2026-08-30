@@ -18,7 +18,11 @@ from pathlib import Path
 from massbank_context.core.serialization import json_payload
 from massbank_context.index.background import build_background
 from massbank_context.index.classyfire import read_classyfire_tsv
-from massbank_context.index.mass_error import choose_bin_width, measure_mass_error
+from massbank_context.index.mass_error import (
+    MIN_MASS_ERROR_SAMPLES,
+    choose_bin_width,
+    measure_mass_error,
+)
 from massbank_context.index.writer import IndexWriter, is_indexable, open_index
 from massbank_context.ttl.reader import read_ttl_file_with_generation
 
@@ -65,22 +69,26 @@ def build_index(ttl_dir: str | Path, output: str | Path,
                     counts["files"], counts["records"], counts["peaks"])
 
     # --- ビン幅を実測から決める（spec §6.4）---
-    # 測るのは索引に入るレコードだけ。choose_bin_width は装置クラス横断の
-    # 最大値を採るため、ここに層の条件で弾かれるレコードを混ぜると、
-    # 索引に 1 件も入らない装置クラスが索引の照合窓を決めてしまう。
+    # 測るのは索引に入るレコードだけ。ここに層の条件で弾かれるレコードを
+    # 混ぜると、索引に 1 件も入らない装置クラスがレコード数の重みを持ち、
+    # 索引の照合窓を決めてしまう。
     indexable = [r for r in records if is_indexable(r, resolution_filter)]
     logger.info("質量誤差の母集団: %d / %d レコード（層の条件を通ったもの）",
                 len(indexable), len(records))
     profile = measure_mass_error(indexable)
     bin_width = choose_bin_width(profile)
     # 「ビン幅は決め打ちではなく実測」という主張は、この 1 関数の出力だけに
-    # 乗っている。1 装置クラスの汚染が最大値経由で索引全体のビンを太らせるため、
-    # 採用値と内訳の両方を残して運用者が妥当性を目視できるようにする。
+    # 乗っている。採用値と内訳（標本数を含む）の両方を残し、運用者が
+    # 妥当性を目視できるようにする。
     logger.info("採用ビン幅: %.6f（実測できた装置クラス %d 件）",
                 bin_width, len(profile))
-    for instrument_class, entries in sorted(profile.items()):
-        logger.info("質量誤差プロファイル %s: %s", instrument_class,
-                    " ".join(f"p{pct:g}={delta:.6f}" for pct, delta in entries))
+    for instrument_class, entry in sorted(profile.items()):
+        logger.info(
+            "質量誤差プロファイル %s: records=%d samples=%d %s%s",
+            instrument_class, entry.n_records, entry.n_samples,
+            " ".join(f"p{pct:g}={delta:.6f}" for pct, delta in entry.percentiles),
+            "" if entry.n_samples >= MIN_MASS_ERROR_SAMPLES
+            else f"（標本 {MIN_MASS_ERROR_SAMPLES} 未満のためビン幅の決定には使わない）")
 
     # --- パス 2: ビン化して書く ---
     conn = open_index(output, create=True)

@@ -13,6 +13,7 @@ from typing import Iterable
 
 from massbank_context.core.binning import axis_entries
 from massbank_context.core.models import SpectrumRecord
+from massbank_context.index.mass_error import InstrumentErrorProfile
 from massbank_context.index.schema import DDL
 
 #: 化合物クラスとして意味をなさないラベル。実データに頻出する（spec §6.6）。
@@ -38,7 +39,7 @@ def is_indexable(record: SpectrumRecord, resolution_filter: str) -> bool:
     分けて書くと、索引に 1 件も入らないレコードが質量誤差の実測を通じて
     索引のビン幅（＝照合窓）を決めるという食い違いが生じる。実コーパスでは
     実際にそうなっており、resolution_filter で全件弾かれる GC-EI-Q /
-    LC-APPI-QQ の散らばりが choose_bin_width の最大値経由で幅を決めていた。
+    LC-APPI-QQ の散らばりが choose_bin_width を通じて幅を決めていた。
     """
     if not record.inchikey:
         return False
@@ -197,13 +198,16 @@ class IndexWriter:
         return {"written": written, "skipped_unknown_inchikey": skipped}
 
     def write_mass_error_profile(
-            self, profile: dict[str, list[tuple[float, float]]]) -> None:
-        for instrument_class, entries in profile.items():
-            for percentile, delta_mz in entries:
+            self, profiles: dict[str, InstrumentErrorProfile]) -> None:
+        """測った質量誤差を、それを支える母集団の大きさと一緒に残す。"""
+        for instrument_class, profile in profiles.items():
+            for percentile, delta_mz in profile.percentiles:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO mass_error_profile"
-                    " (instrument_class, percentile, delta_mz) VALUES (?,?,?)",
-                    (instrument_class, percentile, delta_mz))
+                    " (instrument_class, percentile, delta_mz,"
+                    "  n_records, n_samples) VALUES (?,?,?,?,?)",
+                    (instrument_class, percentile, delta_mz,
+                     profile.n_records, profile.n_samples))
 
     def finalize(self, meta: dict) -> None:
         """index_meta を書いてコミットする。
