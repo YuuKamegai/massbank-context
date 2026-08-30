@@ -211,3 +211,20 @@ def test_out_of_scope_record_is_not_counted_as_no_peaks(conn):
     peakless = SpectrumRecord(**{**record.__dict__, "peaks": ()})
     assert writer.add_record(peakless) is False
     assert writer.n_no_peaks == 0
+
+
+def test_is_indexable_matches_add_record(conn):
+    """層の判定は add_record と共有する。
+
+    ビン幅の実測が「索引に入るレコード」を選ぶのに同じ条件を使えないと、
+    フィルタの変更がビン幅の測定範囲と静かに食い違う。
+    """
+    from massbank_context.index.writer import is_indexable
+
+    assert is_indexable(_record(), "high") is True
+    assert is_indexable(_record(instrument_type="LC-ESI-QQ"), "high") is False
+    assert is_indexable(_record(instrument_type="LC-ESI-QQ"), "low") is True
+    assert is_indexable(_record(ms_type="MS3"), "high") is False
+    assert is_indexable(_record(inchikey=None), "high") is False
+    # フィルタ無効化（''）では分解能の層を問わない。
+    assert is_indexable(_record(instrument_type="LC-ESI-QQ"), "") is True

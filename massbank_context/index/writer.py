@@ -9,6 +9,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
 from massbank_context.core.binning import axis_entries
 from massbank_context.core.models import SpectrumRecord
@@ -28,6 +29,24 @@ _DERIVED_META_KEYS = frozenset({
     "n_records", "n_inchikey", "acquisition_classes", "bin_width",
     "built_at", "resolution_filter",
 })
+
+
+def is_indexable(record: SpectrumRecord, resolution_filter: str) -> bool:
+    """レコードが索引の層に属するかを返す（ピークの有無は見ない）。
+
+    add_record の層の条件と、ビン幅を測る母集団の条件を 1 箇所に集約する。
+    分けて書くと、索引に 1 件も入らないレコードが質量誤差の実測を通じて
+    索引のビン幅（＝照合窓）を決めるという食い違いが生じる。実コーパスでは
+    実際にそうなっており、resolution_filter で全件弾かれる GC-EI-Q /
+    LC-APPI-QQ の散らばりが choose_bin_width の最大値経由で幅を決めていた。
+    """
+    if not record.inchikey:
+        return False
+    if record.acquisition_class == "other":
+        return False
+    if resolution_filter and record.resolution_class != resolution_filter:
+        return False
+    return True
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -89,12 +108,7 @@ class IndexWriter:
 
     def add_record(self, record: SpectrumRecord) -> bool:
         """受け入れたら True、層の条件で弾いたら False を返す。"""
-        if not record.inchikey:
-            return False
-        if record.acquisition_class == "other":
-            return False
-        if (self._resolution_filter
-                and record.resolution_class != self._resolution_filter):
+        if not is_indexable(record, self._resolution_filter):
             return False
         if not record.peaks:
             # ピークの無いレコードは照合にも IDF の df にも一切寄与しない。
@@ -154,6 +168,33 @@ class IndexWriter:
             if label and label.upper() not in _USELESS_CLASS_LABELS:
                 labels.append(label)
         return labels
+
+    def add_compound_classes(
+            self, entries: Iterable[tuple[str, str, str]]) -> dict[str, int]:
+        """外部由来の化合物クラスを取り込み、書いた件数と弾いた件数を返す。
+
+        索引に入っている InChIKey のものだけを書く。ClassyFire の TSV は
+        MassBank 全レコードを覆う一方、索引は層の条件（resolution_class 等）で
+        絞られている。入っていない化合物のクラスを持っても層別背景には使えず、
+        compound_class が「索引の中身のクラス」なのか「MassBank 全体のクラス」
+        なのかが曖昧になる。
+
+        弾いた件数を返すのは、TSV の InChIKey 表記が索引側と食い違っていた場合に
+        「1 件も書けなかった」を成功と見分けるためである。
+        """
+        known = {row[0] for row in self._conn.execute(
+            "SELECT inchikey FROM records")}
+        written = 0
+        skipped = 0
+        for inchikey, source, label in entries:
+            if inchikey not in known:
+                skipped += 1
+                continue
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO compound_class (inchikey, source, label)"
+                " VALUES (?,?,?)", (inchikey, source, label))
+            written += cursor.rowcount
+        return {"written": written, "skipped_unknown_inchikey": skipped}
 
     def write_mass_error_profile(
             self, profile: dict[str, list[tuple[float, float]]]) -> None:

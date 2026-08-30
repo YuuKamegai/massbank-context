@@ -169,3 +169,33 @@ def test_build_index_logs_bin_width_at_info(tmp_path, caplog):
     messages = [record.getMessage() for record in caplog.records]
     assert any("採用ビン幅" in message for message in messages)
     assert any("TTL 世代 gen_a" in message for message in messages)
+
+
+def test_bin_width_ignores_records_excluded_from_the_index(tmp_path):
+    """ビン幅は索引に入るレコードだけで測る。
+
+    実コーパスでは、resolution_filter で弾かれる低分解能クラス
+    （GC-EI-Q / LC-APPI-QQ 等）の散らばりが最大値経由でビン幅を決めていた。
+    索引に 1 件も入らないレコードが索引の照合窓を決めるのは誤りである。
+    """
+    ttl_dir = _ttl_dir(tmp_path)
+    source = (FIXTURES / "gen_a" / "MSBNK-TEST-A0001.ttl").read_text(
+        encoding="utf-8")
+    # 低分解能（弾かれる）レコードを 2 件。同一 InChIKey・同じフラグメントを
+    # 大きくずらして置き、質量誤差の標本として最大幅を作る。
+    for i, shifted in enumerate(("8.60349e+01", "8.64349e+01"), start=1):
+        (ttl_dir / f"low{i}.ttl").write_text(
+            source.replace("MSBNK-TEST-A0001", f"MSBNK-TEST-A010{i}")
+                  .replace("LC-ESI-ITFT", "LC-ESI-QQ")
+                  .replace("mbo:mz 8.60349e+01", f"mbo:mz {shifted}"),
+            encoding="utf-8")
+
+    build_index(ttl_dir, tmp_path / "index.sqlite")
+    conn = sqlite3.connect(str(tmp_path / "index.sqlite"))
+    classes = {row[0] for row in conn.execute(
+        "SELECT DISTINCT instrument_class FROM mass_error_profile")}
+    indexed = {row[0] for row in conn.execute(
+        "SELECT DISTINCT instrument_type FROM records")}
+    conn.close()
+    assert "LC-ESI-QQ" not in classes
+    assert classes <= indexed
