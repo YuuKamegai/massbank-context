@@ -423,3 +423,81 @@ def test_positive_query_weights_come_from_the_positive_pool(conn_mixed):
     results = match_spectrum(conn_mixed, query, "LC-ESI-MS2")
     assert [r.accession for r in results] == ["MSBNK-TEST-A0001"]
     assert abs(results[0].weighted_score - 0.5) < 1e-9
+
+
+@pytest.fixture()
+def conn_wide_bin(tmp_path):
+    """ビンが広く、複数のクエリピークが 1 本の record ピークに重なる索引。
+
+    実データ（bin_width 0.05）で cosine が 1.0411 になった経路を再現する。
+    レコードのピークを離して置き、クエリ側だけを 1 ビンに詰める。
+    """
+    ttl_dir = tmp_path / "ttl"
+    ttl_dir.mkdir()
+    _write_ttl_record(ttl_dir, "MSBNK-TEST-W0001", "WWWWWWWWWWWWWW-UHFFFAOYSA-N",
+                      230.0552, [(100.0, 999.0), (200.0, 500.0)])
+    _write_ttl_record(ttl_dir, "MSBNK-TEST-W0002", "VVVVVVVVVVVVVV-UHFFFAOYSA-N",
+                      600.0, [(100.0, 999.0), (300.0, 500.0)])
+    build_index(ttl_dir, tmp_path / "index.sqlite")
+    connection = sqlite3.connect(str(tmp_path / "index.sqlite"))
+    yield connection
+    connection.close()
+
+
+def _crowded_query(bin_width: float) -> QuerySpectrum:
+    """1 本の record ピーク(100.0) の探索窓に 4 本のクエリピークを詰めた質問。"""
+    step = bin_width / 2
+    peaks = [(100.0 + i * step, 999.0) for i in range(4)]
+    return _query(peaks)
+
+
+def test_cosine_never_exceeds_one(conn_wide_bin):
+    """cosine は定義上 1 を超えない。
+
+    多対一の一致を許すと、record の強度が内積で複数回加算される一方
+    ノルムには 1 回しか現れず、Cauchy-Schwarz が破れる。
+    """
+    from massbank_context.index.writer import read_meta
+    bin_width = read_meta(conn_wide_bin)["bin_width"]
+    results = match_spectrum(conn_wide_bin, _crowded_query(bin_width),
+                             "LC-ESI-MS2")
+    assert results
+    for candidate in results:
+        assert candidate.cosine <= 1.0 + 1e-9, candidate
+
+
+def test_matched_fragments_cannot_exceed_record_peaks(conn_wide_bin):
+    """一致は 1 対 1。record の 1 本を複数のクエリピークで数え上げない。
+
+    matched_fragments が水増しされると weighted_score（並び順を決める主スコア）も
+    同時に上振れするため、これは表示上の問題ではない。
+    """
+    from massbank_context.core.binning import PRODUCT_ION
+    from massbank_context.index.writer import read_meta
+    bin_width = read_meta(conn_wide_bin)["bin_width"]
+    results = match_spectrum(conn_wide_bin, _crowded_query(bin_width),
+                             "LC-ESI-MS2")
+    assert results
+    for candidate in results:
+        record_peaks = conn_wide_bin.execute(
+            "SELECT COUNT(*) FROM peaks p JOIN records r"
+            " ON r.record_id = p.record_id"
+            " WHERE r.accession=? AND p.axis=?",
+            (candidate.accession, PRODUCT_ION)).fetchone()[0]
+        assert candidate.matched_fragments <= record_peaks, candidate
+
+
+def test_exact_bin_is_preferred_over_neighbour(conn_wide_bin):
+    """中心ビンに当たる相手が居るなら、隣のビンを先に消費しない。
+
+    一致を 1 対 1 にすると割り当ての順序が結果を変える。中心を優先しないと、
+    ずれの小さいピークが隣のビンを取ってしまい、本来当たるはずの
+    ピークが弾かれる。
+    """
+    from massbank_context.index.writer import read_meta
+    bin_width = read_meta(conn_wide_bin)["bin_width"]
+    # 100.0 ちょうど（中心ビン）と、その隣のビンに落ちる 1 本。
+    query = _query([(100.0, 999.0), (100.0 + bin_width, 500.0)])
+    results = match_spectrum(conn_wide_bin, query, "LC-ESI-MS2")
+    top = next(c for c in results if c.accession == "MSBNK-TEST-W0001")
+    assert top.matched_fragments == 1

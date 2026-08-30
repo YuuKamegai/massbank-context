@@ -42,6 +42,18 @@ def fragment_tolerance(bin_width: float) -> float:
     return bin_width * FRAGMENT_TOLERANCE_BINS
 
 
+def _preference_order(bins: tuple[int, int, int]) -> tuple[int, int, int]:
+    """probe_bins の (k-1, k, k+1) を (k, k-1, k+1) に並べ替える。
+
+    一致を 1 対 1 に制約すると、どのビンを先に消費するかが結果を変える。
+    中心ビン（クエリピークが実際に落ちたビン）を最優先にしないと、
+    わずかにずれたピークが隣のビンを先取りし、そのビンに正対する別の
+    ピークが一致を失う。探索する 3 ビンの集合そのものは変えない。
+    """
+    lower, centre, upper = bins
+    return (centre, lower, upper)
+
+
 @dataclass(frozen=True)
 class MatchCandidate:
     """1 候補の spectral_evidence（spec §5.3）。
@@ -138,21 +150,37 @@ def match_spectrum(conn: sqlite3.Connection,
 
     candidates: list[MatchCandidate] = []
     for record_id, accession, inchikey, record_precursor in rows:
-        record_bins = {
-            bin_no: intensity
-            for bin_no, intensity in conn.execute(
+        # 同一ビンに複数の record ピークが落ちたら強度の最大値を代表にする。
+        # dict 内包で後勝ちにすると代表値が任意になり、しかも cosine の
+        # ノルムから消えたピークの分だけ norm_r が過小になる。
+        record_bins: dict[int, float] = {}
+        for bin_no, intensity in conn.execute(
                 "SELECT bin, relative_intensity FROM peaks"
-                " WHERE record_id=? AND axis=?", (record_id, PRODUCT_ION))
-        }
+                " WHERE record_id=? AND axis=?", (record_id, PRODUCT_ION)):
+            value = intensity or 0.0
+            if value > record_bins.get(bin_no, float("-inf")):
+                record_bins[bin_no] = value
         matched_idf = 0.0
         matched = 0
         cosine_pairs: list[tuple[float, float]] = []
+        # 一致は 1 対 1 に制約する。record の 1 本を複数のクエリピークで
+        # 使い回すと、(a) matched_fragments が化学的に別のフラグメントを
+        # 重複計上し、weighted_score（並び順を決める主スコア）が上振れし、
+        # (b) 同じ強度が内積で複数回加算される一方 norm_r には 1 回しか
+        # 現れないため cosine が 1 を超える。実データ（bin_width 0.05）で
+        # 実際に 1.04 が出た。消費済みのビンは以降のピークに渡さない。
+        consumed: set[int] = set()
         for peak, bins, idf in zip(spectrum.peaks, query_bins, query_idf):
             # probe_bins（±1）の中で record が実際に持つビンを探す。カバレッジの
             # matched 判定と同じ窓を使うことで、cosine が別の一致基準を持たない
-            # ようにする。複数当たっても二重計上しないよう最初の 1 つだけ使う。
-            hit_bin = next((b for b in bins if b in record_bins), None)
+            # ようにする。中心ビンを最優先で見るのは、1 対 1 にすると割り当ての
+            # 順序が結果を変えるため。ずれの小さいピークに隣のビンを先取りさせると、
+            # そのビンに正対するピークが弾かれる。
+            hit_bin = next(
+                (b for b in _preference_order(bins)
+                 if b in record_bins and b not in consumed), None)
             if hit_bin is not None:
+                consumed.add(hit_bin)
                 matched += 1
                 matched_idf += idf
                 cosine_pairs.append((peak.relative_intensity, record_bins[hit_bin]))
