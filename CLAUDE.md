@@ -11,8 +11,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 コード中の `spec §6.4` のような参照はこの文書の節番号を指す。**設計上の判断を変える前に
 必ず該当節を読むこと。** §13 に Phase 2 以降へ意図的に残した課題がある。
 
-現状は Phase 1（索引ビルド + バイアス無し照合）まで。`kg/` `bias/` `catalog/` `report/`、
-および spec §7.2 のツール 10 本のうち 4 本以外は未実装。
+現状は Phase 1（索引ビルド + バイアス無し照合）に加え、パスウェイ活性同定の
+Phase A〜D（`experiment/` `kg/` `stats/` `report/`、ツール 4 本）まで。
+設計は [docs/superpowers/specs/2026-08-31-pathway-activity-design.md](docs/superpowers/specs/2026-08-31-pathway-activity-design.md)。
+`bias/` `catalog/` と spec §7.2 のツール 10 本のうち残りは未実装。
 
 ## コマンド
 
@@ -42,13 +44,17 @@ lint 設定は無い。依存は `rdflib` と `mcp` のみ。
 依存は上から下への一方向。`core/` は leaf で、上位モジュールを import してはならない。
 
 ```
-core/     設定・セッション状態・データモデル・層の導出・ビン化・直列化・エラー契約
-ttl/      MassBank TTL リーダ（世代判定 → gen_a / gen_b）
-query/    実験スペクトルのリーダ（.msp / .mgf / .dcl）
-index/    索引ビルド CLI・SQLite スキーマ・IDF 背景・質量誤差プロファイル
-spectral/ 照合エンジン
-tools/    MCP 公開層（実体はここ、server.py は登録するだけ）
-server.py FastMCP ファサード
+core/       設定・セッション状態・データモデル・層の導出・ビン化・直列化・エラー契約
+stats/      Fisher / BH-FDR / Wilcoxon / パスウェイ集計（純関数・leaf）
+ttl/        MassBank TTL リーダ（世代判定 → gen_a / gen_b）
+query/      実験スペクトルのリーダ（.msp / .mgf / .dcl）
+experiment/ 差次的結果の契約リーダ（ms-data-parser との唯一の接点）
+kg/         InChIKey → パスウェイ（PubChem SPARQL + SQLite キャッシュ）
+index/      索引ビルド CLI・SQLite スキーマ・IDF 背景・質量誤差プロファイル
+spectral/   照合エンジン
+report/     事実と仮説を分けた骨組み
+tools/      MCP 公開層（実体はここ、server.py は登録するだけ）
+server.py   FastMCP ファサード
 ```
 
 ### 二層の分類が索引の分割単位（spec §6.1 / §6.2）
