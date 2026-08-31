@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "massbank-context": {
+      "type": "stdio",
+      "command": "C:/Python314/python.exe",
+      "args": ["-m", "massbank_context.server"],
+      "env": {
+        "PYTHONPATH": "C:/Users/yuu18/massbank-context",
+        "MASSBANK_CONTEXT_INDEX": "C:/Users/yuu18/massbank-context/index/massbank.sqlite"
+      }
+    }
+  }
+}
