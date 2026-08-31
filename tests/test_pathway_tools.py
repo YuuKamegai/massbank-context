@@ -67,3 +67,24 @@ def test_payload_does_not_carry_rows(tmp_path):
     payload = json.loads(load_differential(str(path)))
     assert "rows" not in payload
     assert "AAAAAAAAAAAAAA" not in json.dumps(payload)
+
+
+def test_load_differential_rejects_invalid_meta_without_replacing_session(tmp_path):
+    """不正な整数メタは契約エラーにし、既存の結果を置き換えない。"""
+    valid_path = tmp_path / "valid.tsv"
+    valid_path.write_text(GOOD, encoding="utf-8")
+    load_differential(str(valid_path))
+    previous = session_module.session.differential
+    previous_source = session_module.session.differential_source
+
+    invalid_path = tmp_path / "invalid.tsv"
+    invalid_path.write_text(
+        GOOD.replace("n_features_total = 10", "n_features_total = not-a-number"),
+        encoding="utf-8",
+    )
+    payload = json.loads(load_differential(str(invalid_path)))
+
+    assert payload["error"]["code"] == "contract_mismatch"
+    assert "n_features_total" in payload["error"]["reason"]
+    assert session_module.session.differential is previous
+    assert session_module.session.differential_source == previous_source

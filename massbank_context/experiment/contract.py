@@ -18,6 +18,8 @@ REQUIRED_META = [
     "contract_version", "group_a", "group_b", "log2fc_sign",
     "n_features_total", "n_unannotated",
 ]
+REQUIRED_INTEGER_META = ["n_features_total", "n_unannotated"]
+OPTIONAL_INTEGER_META = ["n_a", "n_b", "n_with_inchikey"]
 
 
 class ContractError(ValueError):
@@ -66,15 +68,26 @@ def _parse_meta_line(line: str, meta: dict[str, str]) -> None:
         meta[key.strip()] = value.strip()
 
 
-def _to_float(value: str) -> float | None:
-    """空欄を None として数値列を変換する。"""
+def _to_float(value: str, column: str) -> float | None:
+    """空欄を None として数値列を変換し、不正な値は拒否する。"""
     value = (value or "").strip()
     if not value:
         return None
     try:
         return float(value)
-    except ValueError:
-        return None
+    except ValueError as error:
+        raise ContractError(f"{column} が数値ではありません: {value!r}") from error
+
+
+def _validate_nonnegative_integer_meta(meta: dict[str, str], key: str) -> None:
+    """集計用メタデータを非負整数として検証する。"""
+    value = meta[key]
+    try:
+        integer = int(value)
+    except ValueError as error:
+        raise ContractError(f"{key} が整数ではありません: {value!r}") from error
+    if integer < 0:
+        raise ContractError(f"{key} は 0 以上の整数でなければなりません: {value!r}")
 
 
 def parse_differential(text: str) -> DifferentialSet:
@@ -100,6 +113,11 @@ def parse_differential(text: str) -> DifferentialSet:
             f"log2fc_sign が想定と違います: {meta['log2fc_sign']!r}"
             f"（想定: {EXPECTED_SIGN!r}）。向きが違うファイルは読みません。"
         )
+    for key in REQUIRED_INTEGER_META:
+        _validate_nonnegative_integer_meta(meta, key)
+    for key in OPTIONAL_INTEGER_META:
+        if key in meta:
+            _validate_nonnegative_integer_meta(meta, key)
     if len(body) < 2:
         raise ContractError("ヘッダ行かデータ行がありません。")
 
@@ -121,18 +139,24 @@ def parse_differential(text: str) -> DifferentialSet:
             raise ContractError(
                 "inchikey が空の行があります。書き出し側で落とすべき行です。"
             )
+        significant = cells[index["significant"]].strip().lower()
+        if significant not in {"true", "false"}:
+            raise ContractError(
+                "significant は true または false でなければなりません: "
+                f"{significant!r}"
+            )
         rows.append({
             "spot_id": cells[index["spot_id"]].strip(),
             "name": cells[index["name"]].strip(),
             "ontology": cells[index["ontology"]].strip(),
             "inchikey": inchikey,
-            "mz": _to_float(cells[index["mz"]]),
-            "rt": _to_float(cells[index["rt"]]),
-            "log2fc": _to_float(cells[index["log2fc"]]),
-            "p_value": _to_float(cells[index["p_value"]]),
-            "q_value": _to_float(cells[index["q_value"]]),
-            "mean_a": _to_float(cells[index["mean_a"]]),
-            "mean_b": _to_float(cells[index["mean_b"]]),
-            "significant": cells[index["significant"]].strip().lower() == "true",
+            "mz": _to_float(cells[index["mz"]], "mz"),
+            "rt": _to_float(cells[index["rt"]], "rt"),
+            "log2fc": _to_float(cells[index["log2fc"]], "log2fc"),
+            "p_value": _to_float(cells[index["p_value"]], "p_value"),
+            "q_value": _to_float(cells[index["q_value"]], "q_value"),
+            "mean_a": _to_float(cells[index["mean_a"]], "mean_a"),
+            "mean_b": _to_float(cells[index["mean_b"]], "mean_b"),
+            "significant": significant == "true",
         })
     return DifferentialSet(meta=meta, rows=rows)

@@ -72,3 +72,54 @@ def test_rejects_empty_body():
     text = "\n".join(GOOD.splitlines()[:10])
     with pytest.raises(ContractError):
         parse_differential(text)
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "column"),
+    [
+        ("\t760.5851\t", "\tinvalid\t", "mz"),
+        ("\t12.34\t", "\tinvalid\t", "rt"),
+        ("\t1.900000\t", "\tinvalid\t", "log2fc"),
+        ("\t0.001\t", "\tinvalid\t", "p_value"),
+        ("\t0.01\t", "\tinvalid\t", "q_value"),
+        ("\t10\t40\ttrue", "\tinvalid\t40\ttrue", "mean_a"),
+        ("\t20\t14\tfalse", "\t20\tinvalid\tfalse", "mean_b"),
+    ],
+)
+def test_rejects_non_numeric_required_numeric_cell(original, replacement, column):
+    """非空の必須数値セルを欠損値として扱わない。"""
+    text = GOOD.replace(original, replacement, 1)
+    with pytest.raises(ContractError) as excinfo:
+        parse_differential(text)
+    assert column in str(excinfo.value)
+
+
+def test_keeps_empty_numeric_cell_as_none():
+    """空の必須数値セルは既存契約どおり None として読み込む。"""
+    result = parse_differential(GOOD.replace("\t760.5851\t", "\t\t", 1))
+    assert result.rows[0]["mz"] is None
+
+
+def test_rejects_unknown_significant_value():
+    """真偽値でない significant を false に丸め込まない。"""
+    text = GOOD.replace("\ttrue\n", "\tunknown\n", 1)
+    with pytest.raises(ContractError) as excinfo:
+        parse_differential(text)
+    assert "significant" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "key"),
+    [
+        ("n_features_total = 10", "n_features_total = not-a-number", "n_features_total"),
+        ("n_unannotated = 8", "n_unannotated = -1", "n_unannotated"),
+        ("n_a = 5", "n_a = 1.5", "n_a"),
+        ("n_b = 5", "n_b = -1", "n_b"),
+        ("n_with_inchikey = 2", "n_with_inchikey = invalid", "n_with_inchikey"),
+    ],
+)
+def test_rejects_invalid_integer_meta(original, replacement, key):
+    """集計用メタデータを parse 中に非負整数として検証する。"""
+    with pytest.raises(ContractError) as excinfo:
+        parse_differential(GOOD.replace(original, replacement, 1))
+    assert key in str(excinfo.value)
