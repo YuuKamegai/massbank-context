@@ -123,3 +123,53 @@ def test_rejects_invalid_integer_meta(original, replacement, key):
     with pytest.raises(ContractError) as excinfo:
         parse_differential(GOOD.replace(original, replacement, 1))
     assert key in str(excinfo.value)
+
+
+@pytest.mark.parametrize("literal", ["nan", "NaN", "inf", "-inf", "Infinity"])
+def test_rejects_non_finite_numeric_cell(literal):
+    """nan / inf を契約エラーにする（float() は黙って受理してしまう）。
+
+    上流の BH 補正や t 検定は定数入力で普通に nan を吐き、TSV には `nan` と
+    書かれる。通すと median_log2fc が nan になり、`NaN > 0` も `NaN < 0` も
+    False なので n_up / n_down が n_significant と食い違い、最終的に
+    RFC 8259 でない JSON（`{"x":NaN}`）が出ていく。
+    """
+    text = GOOD.replace("\t1.900000\t", f"\t{literal}\t", 1)
+    with pytest.raises(ContractError) as excinfo:
+        parse_differential(text)
+    assert "log2fc" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("column", ["mz", "rt", "p_value", "q_value"])
+def test_non_finite_is_rejected_in_every_numeric_column(column):
+    """log2fc だけでなく全ての数値列で非有限値を弾く。"""
+    replacements = {
+        "mz": ("\t760.5851\t", "\tnan\t"),
+        "rt": ("\t12.34\t", "\tinf\t"),
+        "p_value": ("\t0.001\t", "\tnan\t"),
+        "q_value": ("\t0.01\t", "\t-inf\t"),
+    }
+    original, replacement = replacements[column]
+    with pytest.raises(ContractError) as excinfo:
+        parse_differential(GOOD.replace(original, replacement, 1))
+    assert column in str(excinfo.value)
+
+
+def test_integer_meta_returns_int_not_string():
+    """任意の整数メタは int で返す（payload に生文字列を出さない）。"""
+    result = parse_differential(GOOD)
+    assert result.integer_meta("n_a") == 5
+    assert isinstance(result.integer_meta("n_a"), int)
+    assert result.integer_meta("n_b") == 5
+
+
+def test_integer_meta_is_none_when_absent():
+    """書かれていない値は 0 ではなく None（「0 人」と「未記載」は別物）。"""
+    text = "\n".join(
+        line for line in GOOD.splitlines()
+        if not line.startswith("# group_a")
+    ).replace("# group_b = gf_HFD\tn_b = 5",
+              "# group_a = gf_AIN\n# group_b = gf_HFD")
+    result = parse_differential(text)
+    assert result.integer_meta("n_a") is None
+    assert result.integer_meta("n_b") is None

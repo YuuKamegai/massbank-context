@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 SUPPORTED_CONTRACT_VERSION = "1"
@@ -53,6 +54,17 @@ class DifferentialSet:
         """注釈されず書き出されなかった特徴量数を返す。"""
         return int(self.meta["n_unannotated"])
 
+    def integer_meta(self, key: str) -> int | None:
+        """任意の整数メタを int で返す。キーが無ければ None を返す。
+
+        値は parse_differential が OPTIONAL_INTEGER_META で検証済みなので、
+        ここでの int() は失敗しない。payload に生文字列を出すと、設計書 §10 の
+        サンプル（int）と型が食い違う。**無い値は 0 ではなく None** である
+        （「群サイズが 0」と「群サイズが書かれていない」は別物）。
+        """
+        value = self.meta.get(key)
+        return None if value is None else int(value)
+
     @property
     def inchikeys(self) -> list[str]:
         """重複を除いた InChIKey を決定的な順序で返す。"""
@@ -69,14 +81,29 @@ def _parse_meta_line(line: str, meta: dict[str, str]) -> None:
 
 
 def _to_float(value: str, column: str) -> float | None:
-    """空欄を None として数値列を変換し、不正な値は拒否する。"""
+    """空欄を None として数値列を変換し、不正な値は拒否する。
+
+    `nan` / `inf` は float() が黙って受理するが、ここでは**契約違反として落とす**。
+    上流の BH 補正や t 検定は定数入力で普通に nan を吐き、TSV には `nan` と書かれる。
+    これを通すと (a) median_log2fc が nan になり（NaN の比較は全て False なので
+    sorted の中央に居座る）、(b) `NaN > 0` も `NaN < 0` も False なので n_up / n_down が
+    n_significant と食い違い、(c) 最終的に payload が `{"x":NaN}` になる。
+    これは RFC 8259 の JSON ではなく、厳密なパーサを持つクライアントが落ちる。
+    「欠測」を表したいなら空欄で書くのが契約である。
+    """
     value = (value or "").strip()
     if not value:
         return None
     try:
-        return float(value)
+        number = float(value)
     except ValueError as error:
         raise ContractError(f"{column} が数値ではありません: {value!r}") from error
+    if not math.isfinite(number):
+        raise ContractError(
+            f"{column} が有限の数値ではありません: {value!r}"
+            "（欠測は空欄で書いてください）"
+        )
+    return number
 
 
 def _validate_nonnegative_integer_meta(meta: dict[str, str], key: str) -> None:

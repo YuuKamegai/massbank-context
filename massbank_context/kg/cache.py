@@ -20,6 +20,10 @@ from pathlib import Path
 
 CACHE_CONTRACT_VERSION = "1"
 
+
+class CacheVersionError(RuntimeError):
+    """キャッシュファイルの版が対応版と違う。呼び出し側が contract_mismatch に変換する。"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS pathway_hit (
     inchikey TEXT NOT NULL,
@@ -48,11 +52,24 @@ CREATE TABLE IF NOT EXISTS cache_meta (
 
 
 def open_cache(path) -> sqlite3.Connection:
-    """キャッシュを開く（無ければ作る）。"""
+    """キャッシュを開く（無ければ作る）。版が違えば開かずに落とす。
+
+    `CREATE TABLE IF NOT EXISTS` は既存テーブルに列を足さないので、スキーマを
+    v2 にしても既存の v1 ファイルは**黙って開いてしまう**。そのまま読むと、
+    欠けた列が既定値の顔をして統計に入る。書き込んだ版を読み返して照合する。
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.executescript(_SCHEMA)
+    row = conn.execute(
+        "SELECT value FROM cache_meta WHERE key = 'contract_version'").fetchone()
+    if row is not None and row[0] != CACHE_CONTRACT_VERSION:
+        conn.close()
+        raise CacheVersionError(
+            f"パスウェイキャッシュの版が違います: {row[0]}"
+            f"（対応: {CACHE_CONTRACT_VERSION}）。"
+            f"{path} を削除してから resolve_pathways を実行し、引き直してください。")
     conn.execute(
         "INSERT OR IGNORE INTO cache_meta(key, value) VALUES ('contract_version', ?)",
         (CACHE_CONTRACT_VERSION,))
@@ -85,22 +102,34 @@ def pending_inchikeys(conn: sqlite3.Connection, inchikeys: list[str],
     return [ik for ik in inchikeys if ik not in done]
 
 
-def failed_inchikeys(conn: sqlite3.Connection,
-                     inchikeys: list[str]) -> list[str]:
-    """直近の照会が失敗している InChIKey。"""
+def failed_inchikeys(conn: sqlite3.Connection, inchikeys: list[str],
+                     endpoint: str) -> list[str]:
+    """直近の照会が、**そのエンドポイントで**失敗している InChIKey。
+
+    endpoint で絞るのは pending_inchikeys と揃えるため。絞らないと、
+    MASSBANK_CONTEXT_PUBCHEM_SPARQL を切り替えたときに旧エンドポイントの
+    failed 行が n_failed に混じり、被覆の分母（len - n_failed）が不当に縮む。
+    """
     failed = {row[0] for row in conn.execute(
-        "SELECT inchikey FROM lookup_log WHERE status = 'failed'")}
+        "SELECT inchikey FROM lookup_log WHERE status = 'failed' "
+        "AND endpoint = ?", (endpoint,))}
     return [ik for ik in inchikeys if ik in failed]
 
 
 def record_result(conn: sqlite3.Connection, inchikey: str, endpoint: str,
                   hits: list[dict]) -> None:
-    """照会結果を記録する。hits が空でも「照会した」ことを必ず残す。"""
+    """照会結果を記録する。hits が空でも「照会した」ことを必ず残す。
+
+    taxid が無いヒットは NULL ではなく空文字列で入れる。PRIMARY KEY は
+    (inchikey, pathway_id, taxid) だが、SQLite は NULL 同士を相異とみなすため、
+    NULL のままだと同じヒットが何度でも重複して入る。
+    """
     conn.execute("DELETE FROM pathway_hit WHERE inchikey = ?", (inchikey,))
     conn.executemany(
         "INSERT OR REPLACE INTO pathway_hit"
         "(inchikey, pathway_id, pathway_label, taxid) VALUES (?, ?, ?, ?)",
-        [(inchikey, h["pathway_id"], h.get("pathway_label"), h.get("taxid"))
+        [(inchikey, h["pathway_id"], h.get("pathway_label"),
+          h.get("taxid") or "")
          for h in hits])
     conn.execute(
         "INSERT OR REPLACE INTO lookup_log"

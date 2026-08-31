@@ -36,7 +36,7 @@ class TestPending:
     def test_failure_stays_pending(self, conn):
         cache.record_failure(conn, "A", ENDPOINT)
         assert cache.pending_inchikeys(conn, ["A"], ENDPOINT) == ["A"]
-        assert cache.failed_inchikeys(conn, ["A"]) == ["A"]
+        assert cache.failed_inchikeys(conn, ["A"], ENDPOINT) == ["A"]
 
     def test_refresh_makes_everything_pending(self, conn):
         cache.record_result(conn, "A", ENDPOINT, [_hit()])
@@ -110,3 +110,58 @@ class TestCacheMeta:
         row = conn.execute(
             "SELECT value FROM cache_meta WHERE key = 'endpoint'").fetchone()
         assert row[0] == "http://other"
+
+
+class TestFailedIsScopedToEndpoint:
+    def test_failure_on_other_endpoint_is_not_counted(self, conn):
+        """failed も endpoint で絞る（pending_inchikeys と揃える）。
+
+        絞らないと、MASSBANK_CONTEXT_PUBCHEM_SPARQL を切り替えたときに旧
+        エンドポイントの failed 行が n_failed に混じり、被覆の分母
+        （len(inchikeys) - n_failed）が不当に縮む。
+        """
+        cache.record_failure(conn, "A", ENDPOINT)
+        assert cache.failed_inchikeys(conn, ["A"], ENDPOINT) == ["A"]
+        assert cache.failed_inchikeys(conn, ["A"], "http://other") == []
+
+
+class TestTaxidIsNeverNull:
+    def test_missing_taxid_is_stored_as_empty_string(self, conn):
+        """taxid の無いヒットは NULL ではなく空文字列で入れる。
+
+        PRIMARY KEY は (inchikey, pathway_id, taxid) だが、SQLite は NULL 同士を
+        相異とみなすため、NULL のままだと同じヒットが重複して入る。
+        """
+        hit = {"pathway_id": "PWID1", "pathway_label": "No organism"}
+        cache.record_result(conn, "A", ENDPOINT, [hit, dict(hit)])
+        entries = cache.memberships(conn, ["A"])["A"]
+        assert len(entries) == 1
+        assert entries[0]["taxid"] == ""
+        nulls = conn.execute(
+            "SELECT COUNT(*) FROM pathway_hit WHERE taxid IS NULL").fetchone()[0]
+        assert nulls == 0
+
+
+class TestCacheVersion:
+    def test_existing_version_mismatch_is_refused(self, tmp_path):
+        """版違いのキャッシュを黙って開かない。
+
+        CREATE TABLE IF NOT EXISTS は既存テーブルに列を足さないので、
+        スキーマを v2 にしても v1 ファイルはそのまま開けてしまう。
+        """
+        path = tmp_path / "old_cache.sqlite"
+        connection = cache.open_cache(path)
+        connection.execute(
+            "UPDATE cache_meta SET value = '99' WHERE key = 'contract_version'")
+        connection.commit()
+        connection.close()
+        with pytest.raises(cache.CacheVersionError) as excinfo:
+            cache.open_cache(path)
+        assert "99" in str(excinfo.value)
+        # どうすればよいかを書く（ファイルを消して引き直す）。
+        assert "削除" in str(excinfo.value)
+
+    def test_same_version_opens(self, tmp_path):
+        path = tmp_path / "cache.sqlite"
+        cache.open_cache(path).close()
+        cache.open_cache(path).close()

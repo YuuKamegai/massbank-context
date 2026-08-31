@@ -91,8 +91,15 @@ def incompatible_organism(available: list[dict], message: str) -> str:
     })
 
 
-def upstream_unavailable(endpoint: str, message: str) -> str:
-    """外部のエンドポイントに到達できない（spec §5.2）。"""
+def upstream_unavailable(endpoint: str, message: str,
+                         n_processed: int | None = None,
+                         n_remaining: int | None = None) -> str:
+    """外部のエンドポイントに到達できない（spec §5.2）。
+
+    n_processed / n_remaining は打ち切った位置を示す。上流が死んでいるときは
+    全件を回し切る前に打ち切るので、「どこまで試したか」を出さないと
+    呼び出し側は再開に必要な情報を失う（spec §12「黙って減らさない」）。
+    """
     if not endpoint or not message:
         raise ValueError("endpoint / message は必須です。")
     return json_payload({
@@ -100,5 +107,7 @@ def upstream_unavailable(endpoint: str, message: str) -> str:
             "code": "upstream_unavailable",
             "endpoint": endpoint,
             "message": message,
+            "n_processed": n_processed,
+            "n_remaining": n_remaining,
         }
     })

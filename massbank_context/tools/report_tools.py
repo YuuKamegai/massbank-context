@@ -1,56 +1,12 @@
 """提示層のツール（spec §10）。"""
 from __future__ import annotations
 
-import json
-
 from massbank_context.core.serialization import json_payload, round_floats
 from massbank_context.core.session import session
 from massbank_context.report.findings import build_findings
-from massbank_context.tools.pathway_tools import pathway_activity
+from massbank_context.tools.pathway_tools import _activity_payload
 
 __all__ = ["draft_pathway_findings"]
-
-#: TSV に戻しても文字列のまま残す列（コントローラ裁定）。
-_STRING_COLUMNS = {"pathway_id", "pathway_label", "taxid", "direction"}
-
-
-def _coerce_cell(value: str):
-    """TSV セルの文字列を元の型に復元する（コントローラ裁定）。
-
-    as_tsv() は全セルを str() に通すため、そのまま dict に詰めると
-    facts.top_pathways が全部文字列になり、設計書 §10 の「数値のみ」に反する。
-    空文字列は None、"True"/"False" は bool、それ以外は int → float の順に
-    変換を試み、どちらも失敗すれば文字列のまま返す。
-    """
-    if value == "":
-        return None
-    if value == "True":
-        return True
-    if value == "False":
-        return False
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    return value
-
-
-def _rows_from_tsv(table: str) -> list[dict]:
-    """as_tsv() で作った TSV を行の dict のリストに戻す。数値・bool 列は型を復元する。"""
-    lines = table.splitlines()
-    columns = lines[0].split("\t")
-    rows = []
-    for line in lines[1:]:
-        cells = line.split("\t")
-        row = {}
-        for column, cell in zip(columns, cells):
-            row[column] = cell if column in _STRING_COLUMNS else _coerce_cell(cell)
-        rows.append(row)
-    return rows
 
 
 def draft_pathway_findings(organism: str = "", min_members: int = 3,
@@ -60,26 +16,26 @@ def draft_pathway_findings(organism: str = "", min_members: int = 3,
     pathway_activity と同じ計算を使い、結果を事実として写す。解釈は書かない。
     「活性化」「不活性化」の語は hypotheses の中にしか置けない。
 
+    計算は `_activity_payload` を **pathway_activity と共有する**（計画 Task 8）。
+    公開ツールの TSV を再パースして型を推測し直すことはしない — 往復すると
+    型を推測で復元する羽目になり（"nan" が float('nan') に戻る）、
+    pathway_label にタブが含まれれば列がずれて top_pathways が黙って壊れる。
+
     provenance の endpoint / fetched_at と population の pathway_coverage は
-    pathway_activity の payload にある値をそのまま写す（ここで再計算しない。
-    同じ計算を二重に実装しないため）。truncated も同様に写す（打ち切りを
-    黙って落とさない）。
+    payload にある値をそのまま写す（ここで再計算しない）。truncated も同様に
+    写す（打ち切りを黙って落とさない）。
     """
-    raw = pathway_activity(organism=organism, min_members=min_members,
-                           top_k=top_k)
-    payload = json.loads(raw)
-    if "error" in payload:
-        return raw
+    error, rows, payload = _activity_payload(organism, min_members, top_k)
+    if error:
+        return error
 
     differential = session.differential
-    rows = _rows_from_tsv(payload["candidates"])
-
     facts = {
         "comparison": {
             "group_a": payload["group_a"],
             "group_b": payload["group_b"],
-            "n_a": differential.meta.get("n_a"),
-            "n_b": differential.meta.get("n_b"),
+            "n_a": differential.integer_meta("n_a"),
+            "n_b": differential.integer_meta("n_b"),
             "log2fc_sign": payload["log2fc_sign"],
         },
         "population": {
@@ -88,6 +44,7 @@ def draft_pathway_findings(organism: str = "", min_members: int = 3,
             "n_unannotated": differential.n_unannotated,
             "n_background": payload["n_background"],
             "n_no_pathway": payload["n_no_pathway"],
+            "n_collapsed_spots": payload["n_collapsed_spots"],
             "n_pathways_total": payload["n_pathways_total"],
             "n_pathways_tested": payload["n_pathways_tested"],
             "pathway_coverage": payload["pathway_coverage"],

@@ -171,3 +171,78 @@ def test_draft_population_pathway_coverage_matches_payload(prepared):
     activity_payload = json.loads(pathway_activity(organism="TAXID10090"))
     assert (payload["facts"]["population"]["pathway_coverage"]
             == activity_payload["pathway_coverage"])
+
+
+def test_draft_payload_is_strict_rfc8259_json(prepared):
+    """NaN / Infinity を含まない JSON を返す（厳密なパーサで落ちないこと）。
+
+    Python の json.loads は既定で NaN / Infinity を通してしまうので、
+    parse_constant で明示的に検出する。契約リーダが非有限値を弾いているのが
+    一次防御で、これはその出口側の回帰テストである。
+    """
+    def _reject(name):
+        raise AssertionError(f"RFC 8259 に無い定数が出力されました: {name}")
+
+    raw = draft_pathway_findings(organism="TAXID10090")
+    json.loads(raw, parse_constant=_reject)
+    assert "NaN" not in raw
+    assert "Infinity" not in raw
+
+
+def test_draft_group_sizes_are_integers(prepared):
+    """facts.comparison の n_a / n_b は int（設計書 §10 のサンプルどおり）。"""
+    payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+    comparison = payload["facts"]["comparison"]
+    assert comparison["n_a"] == 5
+    assert comparison["n_b"] == 5
+    assert isinstance(comparison["n_a"], int)
+    assert isinstance(comparison["n_b"], int)
+
+
+def test_draft_does_not_expose_wilcoxon_q(prepared):
+    """wilcoxon_q は top_pathways にも出さない。"""
+    payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+    assert "wilcoxon_q" not in payload["facts"]["top_pathways"][0]
+
+
+def test_draft_reports_collapsed_spots(prepared):
+    """併合件数を提示層でも出す（黙って行を減らさない）。"""
+    payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+    assert payload["facts"]["population"]["n_collapsed_spots"] == 0
+
+
+def test_draft_survives_tab_in_pathway_label(tmp_path, monkeypatch):
+    """pathway_label にタブが含まれても top_pathways が壊れない。
+
+    TSV へ落として再パースしていたときは as_tsv がエスケープしないため列が
+    ずれ、facts.top_pathways が黙って壊れていた。共有した内部関数から
+    typed dict を直接受け取るので、往復そのものが無くなっている。
+    """
+    monkeypatch.setattr(config, "PATHWAY_CACHE_PATH",
+                        tmp_path / "pathway_cache.sqlite")
+    session_module.session.reset()
+    lines = [_HEADER.rstrip("\n")]
+    spec = [("1", "IK1", "2.0", "true"), ("2", "IK2", "2.0", "true"),
+            ("3", "IK3", "2.0", "true")]
+    for spot, ik, fc, sig in spec:
+        lines.append("\t".join([spot, f"C{spot}", "arf2", "", ik, "arf2", "",
+                                "100.0", "1.0", fc, "0.001", "0.01",
+                                "1", "2", sig]))
+    path = tmp_path / "differential.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    load_differential(str(path))
+    conn = cache.open_cache(config.PATHWAY_CACHE_PATH)
+    for ik in ("IK1", "IK2", "IK3"):
+        cache.record_result(conn, ik, config.PUBCHEM_SPARQL_ENDPOINT, [
+            {"pathway_id": "PWID_TAB", "pathway_label": "Up\tpathway",
+             "taxid": "TAXID10090"}])
+    conn.close()
+    try:
+        payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+        row = payload["facts"]["top_pathways"][0]
+        assert row["pathway_id"] == "PWID_TAB"
+        assert row["pathway_label"] == "Up\tpathway"
+        assert row["taxid"] == "TAXID10090"
+        assert row["n_members"] == 3
+    finally:
+        session_module.session.reset()
