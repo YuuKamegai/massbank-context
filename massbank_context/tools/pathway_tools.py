@@ -6,19 +6,27 @@ from pathlib import Path
 from massbank_context.core import config
 from massbank_context.core.errors import (
     contract_mismatch,
+    incompatible_organism,
     missing_state,
     upstream_unavailable,
 )
-from massbank_context.core.serialization import json_payload, round_floats
+from massbank_context.core.serialization import as_tsv, json_payload, round_floats
 from massbank_context.core.session import session
 from massbank_context.experiment.contract import ContractError, parse_differential
 from massbank_context.kg import cache
 from massbank_context.kg.pathway import PubChemPathwayAdapter
+from massbank_context.stats.activity import pathway_activity_rows
 
-__all__ = ["load_differential", "resolve_pathways"]
+__all__ = ["load_differential", "resolve_pathways", "pathway_activity"]
 
 _SIGN_NOTE = "log2fc は正なら group_b が高い（上昇）。massbank-context 側で反転しない。"
 _BATCH_SIZE = 50
+
+_ACTIVITY_COLUMNS = [
+    "pathway_id", "pathway_label", "taxid", "n_members", "n_significant",
+    "n_up", "n_down", "median_log2fc", "direction", "fisher_p", "fisher_q",
+    "tested", "wilcoxon_p", "wilcoxon_tested",
+]
 
 
 def load_differential(path: str) -> str:
@@ -148,4 +156,97 @@ def resolve_pathways(refresh: bool = False) -> str:
         "organisms": organisms,
         "fetched_at": [first, last],
         "note": note,
+    }))
+
+
+def pathway_activity(organism: str = "", min_members: int = 3,
+                     top_k: int = 30) -> str:
+    """パスウェイ単位の濃縮と方向を返す（spec §7）。
+
+    organism は必須である。生物種を跨いだパスウェイを黙って混ぜず、既定で
+    human に寄せることもしない（実測で非哺乳類が 4 割混ざる）。
+
+    背景は「InChIKey が付き、照会が完了し、指定 organism のパスウェイを
+    1 つ以上持つ化合物」に限る。パスウェイを持たない化合物を背景に含めると
+    全パスウェイが一律に有意寄りになる。除外件数は n_no_pathway で返す。
+
+    並び順は濃縮の q 値だけで決まる。方向の p 値では並べ替えない
+    （スコアを合成しない・spec §5.3）。
+
+    facts（spec §10）: pathway_coverage は「パスウェイが付いた化合物の割合」の
+    実測値であり、endpoint / fetched_at は提示層が来歴として出すための値。
+    fetched_at は conn を閉じる前に取得する。
+    """
+    if session.differential is None:
+        return missing_state(
+            "differential", ["load_differential"],
+            "差次的結果が読み込まれていません。先に load_differential を実行してください。")
+
+    differential = session.differential
+    inchikeys = differential.inchikeys
+    endpoint = config.PUBCHEM_SPARQL_ENDPOINT
+    conn = cache.open_cache(config.PATHWAY_CACHE_PATH)
+    try:
+        pending = cache.pending_inchikeys(conn, inchikeys, endpoint)
+        if pending:
+            return missing_state(
+                "resolved_pathways", ["resolve_pathways"],
+                f"照会が完了していない InChIKey が {len(pending)} 件あります。"
+                "部分的な母集団で統計を回すと被覆が変わって濃縮の p 値が動くため、"
+                "resolve_pathways を実行してから呼んでください。")
+        available = cache.organism_counts(conn, inchikeys)
+        if not available:
+            return missing_state(
+                "resolved_pathways", ["resolve_pathways"],
+                "パスウェイが 1 件も引けていません。resolve_pathways を実行してください。")
+        if not organism or organism not in {o["taxid"] for o in available}:
+            return incompatible_organism(
+                available=available,
+                message=("organism を指定してください。生物種を跨いだパスウェイを"
+                         "混ぜると解釈できません（既定で human に寄せることもしません）。"))
+        found = cache.memberships(conn, inchikeys, taxid=organism)
+        fetched_at = list(cache.fetched_at_range(conn, inchikeys))
+    finally:
+        conn.close()
+
+    by_inchikey: dict[str, dict] = {}
+    for row in differential.rows:
+        inchikey = row["inchikey"]
+        current = by_inchikey.get(inchikey)
+        # 同じ InChIKey が複数スポットに割れることがある。|log2fc| の大きい方を採る。
+        if current is None or abs(row["log2fc"] or 0.0) > abs(current["log2fc"] or 0.0):
+            by_inchikey[inchikey] = {
+                "inchikey": inchikey,
+                "log2fc": row["log2fc"],
+                "significant": row["significant"],
+            }
+    background = [c for ik, c in by_inchikey.items() if ik in found]
+    n_no_pathway = len(by_inchikey) - len(background)
+    denominator = len(background) + n_no_pathway
+    pathway_coverage = (len(background) / denominator) if denominator else 0.0
+
+    rows, summary = pathway_activity_rows(background, found, min_members)
+    truncated = len(rows) > top_k
+    shown = rows[:top_k]
+    table = as_tsv(_ACTIVITY_COLUMNS,
+                   [[round_floats(row.get(column)) for column in _ACTIVITY_COLUMNS]
+                    for row in shown])
+    return json_payload(round_floats({
+        "organism": organism,
+        "group_a": differential.group_a,
+        "group_b": differential.group_b,
+        "log2fc_sign": f"上昇 = {differential.group_b} が高い。",
+        "min_members": min_members,
+        "n_background": summary["n_background"],
+        "n_no_pathway": n_no_pathway,
+        "n_significant": summary["n_significant"],
+        "n_pathways_total": summary["n_pathways_total"],
+        "n_pathways_tested": summary["n_pathways_tested"],
+        "pathway_coverage": pathway_coverage,
+        "endpoint": endpoint,
+        "fetched_at": fetched_at,
+        "truncated": truncated,
+        "candidates": table,
+        "note": ("direction は検定ではなく記述です。fisher_q と wilcoxon_p は"
+                 "別々の量であり、合成しないでください。"),
     }))
