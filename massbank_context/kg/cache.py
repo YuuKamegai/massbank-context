@@ -24,6 +24,7 @@ CACHE_CONTRACT_VERSION = "1"
 class CacheVersionError(RuntimeError):
     """キャッシュファイルの版が対応版と違う。呼び出し側が contract_mismatch に変換する。"""
 
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS pathway_hit (
     inchikey TEXT NOT NULL,
