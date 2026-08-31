@@ -55,3 +55,50 @@ def incompatible_index(query_acquisition_class: str,
             "message": message,
         }
     })
+
+
+def contract_mismatch(reason: str, expected: str, path: str) -> str:
+    """入力ファイルが契約に合わない（spec §6.1）。
+
+    どの契約のどこが合わなかったかを示さないと、書き出した側を直せない。
+    """
+    if not reason or not expected:
+        raise ValueError("reason / expected は必須です。")
+    return json_payload({
+        "error": {
+            "code": "contract_mismatch",
+            "reason": reason,
+            "expected": expected,
+            "path": path,
+        }
+    })
+
+
+def incompatible_organism(available: list[dict], message: str) -> str:
+    """organism が未指定、または照会結果に無い（spec §6.3）。
+
+    生物種を跨いだパスウェイを黙って混ぜない。既定で human に寄せることも
+    しない — 選べる候補と件数を返して呼び出し側に選ばせる。
+    """
+    if not available or not message:
+        raise ValueError("available / message は必須です。")
+    return json_payload({
+        "error": {
+            "code": "incompatible_organism",
+            "available": list(available),
+            "message": message,
+        }
+    })
+
+
+def upstream_unavailable(endpoint: str, message: str) -> str:
+    """外部のエンドポイントに到達できない（spec §5.2）。"""
+    if not endpoint or not message:
+        raise ValueError("endpoint / message は必須です。")
+    return json_payload({
+        "error": {
+            "code": "upstream_unavailable",
+            "endpoint": endpoint,
+            "message": message,
+        }
+    })
