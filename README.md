@@ -1,7 +1,7 @@
 # massbank-context
 
 実験で得た MS/MS スペクトルを MassBank-RDF と照合し、候補化合物とメタデータを
-返す MCP サーバ。設計書は Lipidmix_with_LLM リポジトリの
+返す MCP サーバ。設計書は
 `docs/superpowers/specs/2026-08-28-massbank-context-mcp-design.md`。
 
 ## Phase 1 でできること

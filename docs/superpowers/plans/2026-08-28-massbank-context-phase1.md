@@ -3630,13 +3630,13 @@ cd C:/Users/yuu18/massbank-context && git add -A && git commit -m "feat: MCP サ
 - [ ] **MassBank-RDF を取得する**
 
 ```bash
-git clone --depth 1 https://github.com/systemsomicslab/MassBank-RDF.git C:/Users/yuu18/MassBank-RDF
+git clone --depth 1 https://github.com/systemsomicslab/MassBank-RDF.git C:/Users/yuu18/massbank-context/MassBank-RDF
 ```
 
 - [ ] **小さく試す（先頭 500 ファイル）**
 
 ```bash
-C:/Python314/python.exe -m massbank_context.index build --ttl-dir C:/Users/yuu18/MassBank-RDF/draft_ttl --output C:/Users/yuu18/massbank-context/index/sample.sqlite --limit 500
+C:/Python314/python.exe -m massbank_context.index build --ttl-dir C:/Users/yuu18/massbank-context/MassBank-RDF/draft_ttl --output C:/Users/yuu18/massbank-context/index/sample.sqlite --limit 500
 ```
 
 期待: `accepted` が 0 でないこと。`bin_width` が 0.001〜0.05 の範囲に入ること
@@ -3645,7 +3645,7 @@ C:/Python314/python.exe -m massbank_context.index build --ttl-dir C:/Users/yuu18
 - [ ] **全件でビルドする**
 
 ```bash
-C:/Python314/python.exe -m massbank_context.index build --ttl-dir C:/Users/yuu18/MassBank-RDF/draft_ttl --output C:/Users/yuu18/massbank-context/index/massbank.sqlite
+C:/Python314/python.exe -m massbank_context.index build --ttl-dir C:/Users/yuu18/massbank-context/MassBank-RDF/draft_ttl --output C:/Users/yuu18/massbank-context/index/massbank.sqlite
 ```
 
 期待: `scanned` が 54,183。`acquisition_classes` に `LC-ESI-MS2` が入ること。

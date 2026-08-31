@@ -12,3 +12,8 @@ __pycache__/
 # ファイルは影響を受けないが、そこに新しいモジュールを足すと静かに追跡漏れする。
 /index/
 *.sqlite
+
+# MassBank の上流リポジトリは、それぞれ独立した Git 履歴とライセンスを持つ。
+# 親リポジトリへ内容を取り込まず、ローカルの参照用 nested clone として保持する。
+/MassBank-RDF/
+/MassbankRdf/

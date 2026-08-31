@@ -31,7 +31,7 @@ MassBank レコードそのものをクエリとして投げ、自分が 1 位�
 
 ```
 python scripts/export_selfcheck_msp.py \
-    --ttl-dir C:/Users/yuu18/massbank-rdf/draft_ttl/MassBank_RDF_ttl \
+    --ttl-dir C:/Users/yuu18/massbank-context/MassBank-RDF/draft_ttl/MassBank_RDF_ttl \
     --output C:/Users/yuu18/datasets/_selfcheck/massbank_selfcheck \
     --per-class 5 --stride 400
 ```
@@ -56,6 +56,10 @@ python scripts/export_selfcheck_msp.py \
   並べるため、辞書順で前のレコードが 1 位に来る。判定は InChIKey 単位で行う
 - 骨格が同じで立体表記だけ違う（InChIKey 第 1 ブロックが同じで第 2 ブロックが違う）
   ケースは**設計どおりの限界**であり、MSI Level 2 の意味そのもの。不合格にしない
+- **実施済み（2026-08-31）: 合格。**
+  [Step 1 実施結果](2026-08-31-selfcheck-step1-results.md) に採点表・不一致行・
+  同点が別 InChIKey に割れた 3 件を残した。採点には正解表の読み取りが要るため
+  MCP セッションからは完結せず、ローカル実行が必要である
 - 事前実行（2026-08-31）の実績: 候補 20/20、1 位が同一 InChIKey 19/20、
   残り 1 件も骨格一致（`AMRQXHFXNZFDCH-SECBINFHSA-N` に対し
   `AMRQXHFXNZFDCH-UHFFFAOYSA-N` が 1 位）。全件 score 1.0 / `PASS`
