@@ -13,10 +13,14 @@ class Session:
     def __init__(self) -> None:
         self.spectra: dict[str, QuerySpectrum] = {}
         self.source: str | None = None
+        self.differential = None       # experiment.DifferentialSet | None
+        self.differential_source: str | None = None
 
     def reset(self) -> None:
         self.spectra = {}
         self.source = None
+        self.differential = None       # experiment.DifferentialSet | None
+        self.differential_source = None
 
     def set_spectra(self, spectra: list[QuerySpectrum], source: str) -> None:
         self.spectra = {s.spectrum_id: s for s in spectra}
