@@ -49,7 +49,15 @@ def pathway_activity_rows(compounds: list[dict],
     引数:
         compounds: [{"inchikey", "log2fc", "significant"}]。**背景の化合物だけ**を渡す
             （パスウェイを 1 つも持たない化合物は呼び出し側で除外しておく）。
+            同一 InChIKey は 1 件に併合済みであること（複数スポットが残っていると
+            同じ化合物を重複して数える）。
         memberships: inchikey -> [{"pathway_id", "pathway_label", "taxid"}]。
+            **呼び出し側で organism による前フィルタが済んでいること**が前提である。
+            ここでは pathway_id だけで束ね、taxid と pathway_label は最初に来た
+            エントリのものを採るため、複数の生物種が混ざったまま渡すと、同じ
+            pathway_id を持つ別生物種のパスウェイが黙って 1 行に統合され、
+            taxid 列は実際に含まれる生物種の一部しか表さなくなる。
+            kg.cache.memberships(conn, inchikeys, taxid=...) で絞ってから渡す。
         min_members: この数未満のメンバーしか持たないパスウェイは検定しない。
 
     戻り値: (rows, summary)。rows は濃縮の q 値昇順、同値は pathway_id 昇順。

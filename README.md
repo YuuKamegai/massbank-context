@@ -4,9 +4,35 @@
 返す MCP サーバ。設計書は
 `docs/superpowers/specs/2026-08-28-massbank-context-mcp-design.md`。
 
-## Phase 1 でできること
+## できること
 
-索引の構築と、バイアス無しのスペクトル照合まで。メタデータ取得（Phase 2 以降）は未実装。
+- **索引の構築とスペクトル照合**（Phase 1）: MassBank-RDF の TTL からローカル索引を
+  作り、実験スペクトルを IDF 重み付きカバレッジで照合する。
+- **パスウェイ活性同定**（Phase 2〜3。設計書は
+  `docs/superpowers/specs/2026-08-31-pathway-activity-design.md`）:
+  ms-data-parser が書き出した差次的結果 TSV を読み、InChIKey から PubChem の
+  パスウェイを引いて、パスウェイ単位の濃縮（片側 Fisher + BH-FDR）と方向
+  （記述 + Wilcoxon 符号順位）を返す。ツールは `load_differential` /
+  `resolve_pathways` / `pathway_activity` / `draft_pathway_findings` の 4 本。
+
+MassBank レコードのメタデータ取得（`catalog/` `bias/`）は未実装。
+
+## ⚠ 外部への通信
+
+`resolve_pathways` は **rdfportal.org（PubChem SPARQL）へ外向きの HTTP を出す**。
+このサーバで外部と通信するのはこの経路だけで、索引ビルドとスペクトル照合は
+完全にローカルで完結する。
+
+送るのは差次的結果に含まれる **InChIKey** だけで、50 件ずつのバッチにして
+SPARQL クエリの `VALUES` 節に入れる。試料名・群名・強度値・ファイルパスは送らない。
+
+結果はローカルの SQLite にキャッシュされ、2 回目以降は照会しない
+（日数ベースの TTL は持たない。日付でキャッシュが切れると、同じ解析が日によって
+違う結果を出すため）。引き直したいときは `resolve_pathways(refresh=True)`。
+
+エンドポイントに到達できないときは `upstream_unavailable` を返す。最初のバッチが
+全滅した時点で残りを照会せずに打ち切る（打ち切り位置は `n_processed` /
+`n_remaining` として返る）。
 
 ## 索引を作る
 
@@ -42,7 +68,18 @@ CLI が INFO で出す世代別内訳（`gen_a: N files, M records, K peaks`）�
 C:/Python314/python.exe -m massbank_context.server
 ```
 
-環境変数 `MASSBANK_CONTEXT_INDEX` で索引のパスを上書きできる。
+### 環境変数
+
+いずれも任意で、既定値の上書き用。
+
+| 変数 | 既定値 | 用途 |
+|---|---|---|
+| `MASSBANK_CONTEXT_INDEX` | `index/massbank.sqlite` | スペクトル索引のパス |
+| `MASSBANK_CONTEXT_PATHWAY_CACHE` | `index/pathway_cache.sqlite` | パスウェイ照会のキャッシュ。索引とは別ファイルなので、索引を再ビルドしても消えない |
+| `MASSBANK_CONTEXT_PUBCHEM_SPARQL` | `https://rdfportal.org/pubchem/sparql` | パスウェイを引く SPARQL エンドポイント。**空にしても通信は止まらない**ので、外部へ出したくないときはサーバを起動しないこと |
+
+キャッシュは `cache_meta.contract_version` を持ち、版が違うファイルは開かずに
+`contract_mismatch` を返す。その場合はキャッシュファイルを削除して引き直す。
 
 ## テスト
 
