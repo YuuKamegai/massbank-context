@@ -10,7 +10,7 @@ from massbank_context.report.findings import (
     INTERPRETATION_WORDS,
     build_findings,
 )
-from massbank_context.tools.pathway_tools import load_differential
+from massbank_context.tools.pathway_tools import load_differential, pathway_activity
 from massbank_context.tools.report_tools import draft_pathway_findings
 
 
@@ -128,3 +128,46 @@ def test_draft_provenance_carries_endpoint_and_fetched_at(prepared):
     assert provenance["endpoint"] == config.PUBCHEM_SPARQL_ENDPOINT
     assert provenance["fetched_at"][0] is not None
     assert provenance["fetched_at"][1] is not None
+
+
+def test_draft_top_pathways_have_numeric_and_bool_types(prepared):
+    """レビュー指摘 1: top_pathways は TSV 再パースで全部文字列になっていた。
+
+    設計書 §10 は top_pathways を「数値のみ、解釈なし」と定める。
+    build_findings に手組みの dict を渡すテストでは TSV 再パースの不具合を
+    捕まえられないため、実際の draft_pathway_findings の戻り値を検査する。
+    """
+    payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+    row = payload["facts"]["top_pathways"][0]
+    # 文字列のまま残るべき列
+    assert isinstance(row["pathway_id"], str)
+    assert isinstance(row["pathway_label"], str)
+    assert isinstance(row["taxid"], str)
+    assert isinstance(row["direction"], str)
+    # 数値・bool に復元されるべき列
+    assert isinstance(row["n_members"], int)
+    assert isinstance(row["n_significant"], int)
+    assert isinstance(row["n_up"], int)
+    assert isinstance(row["n_down"], int)
+    assert isinstance(row["median_log2fc"], float)
+    assert isinstance(row["fisher_p"], float)
+    assert isinstance(row["fisher_q"], float)
+    assert isinstance(row["wilcoxon_p"], float)
+    assert row["tested"] is True
+    assert row["wilcoxon_tested"] is True
+
+
+def test_draft_population_truncated_is_carried(prepared):
+    """レビュー指摘 2: truncated が黙って落ちていた（打ち切りを必ず出す）。"""
+    payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+    activity_payload = json.loads(pathway_activity(organism="TAXID10090"))
+    assert "truncated" in payload["facts"]["population"]
+    assert payload["facts"]["population"]["truncated"] == activity_payload["truncated"]
+
+
+def test_draft_population_pathway_coverage_matches_payload(prepared):
+    """コントローラ裁定 3 の未達分: population.pathway_coverage が payload と一致すること。"""
+    payload = json.loads(draft_pathway_findings(organism="TAXID10090"))
+    activity_payload = json.loads(pathway_activity(organism="TAXID10090"))
+    assert (payload["facts"]["population"]["pathway_coverage"]
+            == activity_payload["pathway_coverage"])
