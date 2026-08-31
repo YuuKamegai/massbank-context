@@ -50,6 +50,11 @@ class TestBenjaminiHochberg:
         assert q[1] is None
         assert q[0] == pytest.approx(0.02)
 
+    def test_nan_passes_through(self):
+        q = benjamini_hochberg([0.01, float("nan"), 0.02])
+        assert math.isnan(q[1])
+        assert q[0] == pytest.approx(0.02)
+
 
 class TestWilcoxon:
     def test_all_positive_n5_exact(self):

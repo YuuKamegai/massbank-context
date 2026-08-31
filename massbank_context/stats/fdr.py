@@ -11,7 +11,8 @@ def benjamini_hochberg(pvalues: list[float | None]) -> list[float | None]:
         if p is not None and not math.isnan(p)
     ]
     m = len(indexed)
-    result: list[float | None] = [None] * len(pvalues)
+    # 未検定値は入力どおり保持し、有限な p 値だけ補正する。
+    result: list[float | None] = list(pvalues)
     if m == 0:
         return result
     indexed.sort(key=lambda pair: pair[1])
