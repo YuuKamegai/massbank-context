@@ -60,11 +60,18 @@ class EvidenceStore:
                               tuple(SpectrumLink(**s) for s in data['spectrum_links']),
                               spectra, data['population_complete'], Path(data['manifest_path']))
 
-    def put_snapshot(self, analysis_id: str, kind: str, payload: dict) -> str:
+    def put_snapshot(self, analysis_id: str, kind: str, payload: dict, *, expected_revision=None) -> str:
         self.load(analysis_id)
         raw = canonical_json(payload)
         revision = stable_id('snapshot', [analysis_id, kind, raw])
         with self.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if expected_revision is not None:
+                heads = conn.execute('SELECT kind, revision FROM heads WHERE analysis_id=? ORDER BY kind',
+                                     (analysis_id,)).fetchall()
+                current = stable_id('revision', [analysis_id, canonical_json(heads)])
+                if current != expected_revision:
+                    raise ValueError('stale_revision: 処理中に別の根拠または背景が更新されました')
             conn.execute('INSERT OR IGNORE INTO snapshots VALUES (?,?,?,?)',
                          (revision, analysis_id, kind, raw))
             conn.execute('INSERT OR REPLACE INTO heads VALUES (?,?,?)',

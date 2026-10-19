@@ -10,6 +10,8 @@
 5. `match_feature_spectra`で対応済みMS/MSを照合する。MS/MSなしの特徴量も残る。
 6. `resolve_candidate_evidence`で候補別のRDF根拠を取得する。構造情報のない名前だけの候補は照会不能。
 7. `get_comparison_evidence`で根拠版を固定して全必要ページを取得する。
+   特徴量ページはnext_cursor、RDF等の詳細はnext_evidence_cursorを同じツールのcursorへ渡す。
+   各詳細ページは最大64根拠。lookupsは状態と件数を返し、巨大なhitsを二重送信しない。
    cursorが失効したら初めから取得し直す。大量の根拠は特徴量IDを絞って段階的に読む。
 8. `draft_comparison_findings`で事実と解釈の材料を取得する。経路検定は任意。
 

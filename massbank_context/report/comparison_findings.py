@@ -1,5 +1,6 @@
 """会話側LLMに事実・仮説・参照可能な根拠を渡す。"""
 from massbank_context.report.comparison import get_evidence
+from collections import Counter
 from massbank_context.report.comparison_population import build_population, compute_pathways
 from massbank_context.evidence.selection import candidate_dicts
 
@@ -24,6 +25,17 @@ def build_comparison_findings(store, analysis_id, organism='', include_pathways=
             projection = build_population(bundle, candidate_dicts(bundle, state.get('matches', {})),
                                           state.get('matches', {}).get('features', {}))
             pathways = compute_pathways(projection, state.get('lookups', {}).get('lookups', []), organism)
+            pathways['exclusion_counts'] = dict(Counter(x['reason'] for x in projection.exclusions.values()))
+            pathways.pop('exclusions',None)
+            pathways.pop('representatives',None)
+            all_rows = pathways.get('rows', [])
+            pathways['n_rows_total'] = len(all_rows)
+            pathways['rows_truncated'] = len(all_rows)>10
+            pathways['rows'] = all_rows[:10]
+            for row in pathways['rows']:
+                members = row['feature_ids']
+                row.update(n_member_features=len(members),members_truncated=len(members)>50,
+                           feature_ids=members[:50])
     return dict(analysis_id=analysis_id, evidence_revision=page['evidence_revision'],
                 context_revision=page['context_revision'], facts=page,
                 hypotheses=[dict(slot='biological_interpretation', claim=None,

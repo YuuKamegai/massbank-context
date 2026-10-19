@@ -5,6 +5,7 @@ FIELDS = {'species', 'tissue', 'treatment', 'groups', 'measurement', 'question'}
 
 
 def set_context(store, analysis_id: str, context: dict, confirmed: bool) -> dict:
+    _, base_revision, _ = store.read_view(analysis_id)
     if type(confirmed) is not bool or not isinstance(context, dict) or set(context) - FIELDS:
         raise ValueError('背景の項目または確認状態が不正です')
     status = 'confirmed' if confirmed else 'proposed'
@@ -19,5 +20,5 @@ def set_context(store, analysis_id: str, context: dict, confirmed: bool) -> dict
                                status=status if item['value'] is not None else 'unknown')
     result = dict(status=status, context=normalized)
     result['context_revision'] = stable_id('context', [analysis_id, canonical_json(result)])
-    store.put_snapshot(analysis_id, 'context', result)
+    store.put_snapshot(analysis_id, 'context', result, expected_revision=base_revision)
     return result

@@ -20,7 +20,7 @@ def read_candidate_catalog(conn, *, accessions: list[str], inchikeys: list[str])
             compounds[ik] = dict(compound=dict(row) if row else None, classes=classes)
         for row in result:
             row.update(compounds[row['inchikey']], ttl_source=None)
-        for ik in sorted(set(inchikeys) - {r['inchikey'] for r in result}):
+        for ik in sorted(set(inchikeys)):
             result.append(dict(inchikey=ik, accession=None, ttl_source=None, **compounds[ik]))
         return result
     finally:

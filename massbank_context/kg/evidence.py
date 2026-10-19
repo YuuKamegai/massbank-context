@@ -9,7 +9,7 @@ from massbank_context.evidence.selection import candidate_dicts
 from massbank_context.evidence.matching import select_ids
 from massbank_context.evidence.catalog import read_candidate_catalog
 from massbank_context.kg.evidence_cache import EvidenceCache
-from massbank_context.kg.pathway import PubChemPathwayAdapter, build_pathway_query
+from massbank_context.kg.pathway import PubChemPathwayAdapter, build_pathway_query, UpstreamError
 
 QUERY_VERSION = 'pubchem-participant-v1'
 PARTICIPANT = 'http://purl.obolibrary.org/obo/RO_0000057'
@@ -18,10 +18,19 @@ PARTICIPANT = 'http://purl.obolibrary.org/obo/RO_0000057'
 class EvidenceAdapter(PubChemPathwayAdapter):
     def _query(self, inchikeys):
         payload = self._transport(self.endpoint, build_pathway_query(inchikeys))
+        if (not isinstance(payload, dict) or not isinstance(payload.get('results'), dict)
+                or not isinstance(payload['results'].get('bindings'), list)):
+            raise UpstreamError('SPARQL応答のresults.bindingsがありません')
         result = {}
-        for binding in payload.get('results', {}).get('bindings', []):
-            uri = binding['pathway']['value']
-            result.setdefault(binding['value_inchikey']['value'], []).append(dict(
+        for binding in payload['results']['bindings']:
+            try:
+                uri = binding['pathway']['value']
+                ik = binding['value_inchikey']['value']
+                if not isinstance(uri, str) or not uri.startswith(('http://','https://')) or ik not in inchikeys:
+                    raise ValueError('関係URIまたは照会キーが不正です')
+            except (KeyError, TypeError, ValueError) as exc:
+                raise UpstreamError('SPARQL bindingが不正です') from exc
+            result.setdefault(ik, []).append(dict(
                 pathway_id=uri.rsplit('/', 1)[-1], pathway_uri=uri,
                 pathway_label=binding.get('pathway_label', {}).get('value', ''),
                 organism_uri=binding.get('pathway_organism', {}).get('value'),
@@ -45,8 +54,8 @@ def fetch_pathway_evidence(adapter, inchikeys):
 
 
 def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adapter=None):
-    bundle = store.load(analysis_id)
-    candidates = candidate_dicts(bundle, store.current(analysis_id, 'matches'))
+    bundle, base_revision, state = store.read_view(analysis_id)
+    candidates = candidate_dicts(bundle, state.get('matches', {}))
     by_id = {c['candidate_id']: c for c in candidates}
     ids = select_ids(by_id, candidate_ids)
     adapter = adapter or EvidenceAdapter(config.PUBCHEM_SPARQL_ENDPOINT)
@@ -69,7 +78,7 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
         if all(s['status'] == 'failed' for s in got.values()):
             break
     # 違うendpointや消えた候補の現在結果を引き継がない。
-    previous = store.current(analysis_id, 'lookups')
+    previous = state.get('lookups', {})
     lookups = [x for x in previous.get('lookups', []) if x['candidate_id'] in by_id
                and x['candidate_id'] not in ids and x.get('endpoint') == adapter.endpoint]
     evidence = [x for x in previous.get('evidence', [])
@@ -100,7 +109,7 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
     payload = dict(lookups=lookups, evidence=evidence, catalog=catalog,
                    catalog_provenance=catalog_provenance,
                    scope=['massbank_metadata', 'pubchem_pathways'])
-    store.put_snapshot(analysis_id, 'lookups', payload)
+    store.put_snapshot(analysis_id, 'lookups', payload, expected_revision=base_revision)
     return dict(n_resolved=sum(x['status'] == 'resolved' for x in lookups),
                 n_failed=sum(x['status'] == 'failed' for x in lookups),
                 n_remaining=sum(x['status'] == 'not_queried' for x in lookups),

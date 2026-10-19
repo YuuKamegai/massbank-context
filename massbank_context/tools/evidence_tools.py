@@ -1,5 +1,6 @@
 """候補根拠と2群比較の公開層。解釈は会話側LLMが行う。"""
 import sqlite3
+from collections import Counter
 from pathlib import Path
 from massbank_context.core import config
 from massbank_context.core.serialization import json_payload, round_floats
@@ -21,7 +22,7 @@ def _invoke(operation):
         return json_payload(round_floats(operation(EvidenceStore(config.ARTIFACTS_PATH))))
     except (ValueError, OSError, sqlite3.Error) as exc:
         code = getattr(exc, 'code', 'invalid_evidence_request')
-        for known in ('missing_index', 'incompatible_index', 'stale_cursor', 'invalid_cursor'):
+        for known in ('missing_index', 'incompatible_index', 'stale_cursor', 'invalid_cursor', 'stale_revision'):
             if str(exc).startswith(known):
                 code = known
         return json_payload({'error': {'code': code, 'message': str(exc),
@@ -48,9 +49,15 @@ def match_feature_spectra(analysis_id: str, feature_ids: list[str] | None = None
                           top_k: int = 5, acquisition_class: str = 'LC-ESI-MS2',
                           precursor_tolerance: float = .01) -> str:
     """対応済みMS/MSをローカル照合。順位を背景で変更しない。MS/MSなし・候補打切りを報告する。"""
-    return _invoke(lambda store: match_features(store, analysis_id, feature_ids,
-                                               top_k=top_k, acquisition_class=acquisition_class,
-                                               precursor_tolerance=precursor_tolerance))
+    def operation(store):
+        result = match_features(store, analysis_id, feature_ids,top_k=top_k,
+                                acquisition_class=acquisition_class, precursor_tolerance=precursor_tolerance)
+        features = result.pop('features')
+        result['status_counts'] = dict(Counter(v['status'] for v in features.values()))
+        result['n_truncated_features'] = sum(v.get('truncated',False) for v in features.values())
+        result['details_tool'] = 'get_comparison_evidence'
+        return result
+    return _invoke(operation)
 
 
 def resolve_candidate_evidence(analysis_id: str, candidate_ids: list[str] | None = None,
@@ -61,7 +68,7 @@ def resolve_candidate_evidence(analysis_id: str, candidate_ids: list[str] | None
 
 def get_comparison_evidence(analysis_id: str, feature_ids: list[str] | None = None,
                             cursor: str | None = None, limit: int = 50) -> str:
-    """全件概要と特徴量別根拠を取得。最大200特徴量。next_cursorで全件を取得し、版変更時は取り直す。"""
+    """全件概要と特徴量別根拠を取得。最大200特徴量・64根拠。next_cursorとnext_evidence_cursorをcursorへ渡す。版変更時は取り直す。"""
     return _invoke(lambda store: get_evidence(store, analysis_id, feature_ids=feature_ids,
                                              cursor=cursor, limit=limit))
 

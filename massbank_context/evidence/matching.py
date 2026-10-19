@@ -23,9 +23,9 @@ def match_features(store, analysis_id: str, feature_ids, *, top_k=5,
         raise ValueError('top_kは1〜20です')
     if not math.isfinite(precursor_tolerance) or precursor_tolerance < 0:
         raise ValueError('precursor_toleranceが不正です')
-    bundle = store.load(analysis_id)
+    bundle, base_revision, state = store.read_view(analysis_id)
     ids = select_ids([f.feature_id for f in bundle.features], feature_ids)
-    previous = store.current(analysis_id, 'matches')
+    previous = state.get('matches', {})
     statuses = dict(previous.get('features', {}))
     candidates = [c for c in previous.get('candidates', []) if c['feature_id'] not in ids]
     needed = any(s.feature_id in ids for s in bundle.spectrum_links)
@@ -46,6 +46,9 @@ def match_features(store, analysis_id: str, feature_ids, *, top_k=5,
             links = [s for s in bundle.spectrum_links if s.feature_id == fid]
             status = dict(status='no_msms' if not links else 'matched', truncated=False,
                           n_total=0, boundary_tie_count=0)
+            source_status = bundle.manifest.get('provenance', {}).get('msms_link_statuses', {}).get(fid, {})
+            if not links and source_status.get('status') in ('precursor_mismatch', 'metadata_missing', 'out_of_range'):
+                status.update(status='msms_mapping_failed', mapping_reason=source_status['status'])
             for link in links:
                 spectrum = bundle.spectra[link.spectrum_file + '::' + link.spectrum_id]
                 if not spectrum.peaks:
@@ -71,7 +74,7 @@ def match_features(store, analysis_id: str, feature_ids, *, top_k=5,
             statuses[fid] = status
         payload = dict(features=statuses, candidates=candidates,
                        index_hash=index_hash or previous.get('index_hash'))
-        store.put_snapshot(analysis_id, 'matches', payload)
+        store.put_snapshot(analysis_id, 'matches', payload, expected_revision=base_revision)
         return dict(n_candidates=len(candidates), features=statuses,
                     evidence_revision=store.latest_revision(analysis_id))
     finally:

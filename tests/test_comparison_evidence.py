@@ -31,3 +31,31 @@ def test_context_change_invalidates_cursor(tmp_path):
     set_context(store, aid, {}, False)
     with pytest.raises(ValueError, match='stale_cursor'):
         get_evidence(store, aid, limit=1, cursor=page['next_cursor'])
+
+
+def test_large_rdf_details_are_separately_pageable(tmp_path):
+    from massbank_context.report.comparison import get_evidence
+    store, aid = setup_store(tmp_path)
+    candidate = store.load(aid).annotations[0]
+    rows = [dict(evidence_id=f'e{i:03}',candidate_id=candidate.candidate_id,
+                 feature_id=candidate.feature_id,pathway_id=f'PW{i}') for i in range(130)]
+    store.put_snapshot(aid,'lookups',dict(evidence=rows,lookups=[dict(candidate_id=candidate.candidate_id,
+        status='resolved',hits=rows)],catalog=[]))
+    page = get_evidence(store,aid)
+    assert len(page['evidence']) <= 64
+    assert 'hits' not in page['lookups'][0]
+    ids = {e['evidence_id'] for e in page['evidence']}
+    while page['next_evidence_cursor']:
+        page = get_evidence(store,aid,cursor=page['next_evidence_cursor'])
+        ids.update(e['evidence_id'] for e in page['evidence'])
+    assert len(ids) == 130
+
+
+def test_explicit_unqueried_lookup_counts_as_unqueried(tmp_path):
+    from massbank_context.report.comparison import get_evidence
+    store, aid = setup_store(tmp_path)
+    candidate = store.load(aid).annotations[0]
+    store.put_snapshot(aid,'lookups',dict(evidence=[],lookups=[
+        dict(candidate_id=candidate.candidate_id,status='not_queried')]))
+    summary = get_evidence(store,aid)['summary']
+    assert summary['n_not_queried'] == summary['n_candidates']

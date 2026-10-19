@@ -21,7 +21,10 @@ def build_population(bundle, candidates, match_status):
         active = [c for c in candidates if c['feature_id'] == fid and c['status'] == 'active']
         status = match_status.get(fid, {})
         reason = None
-        if fid in linked and status.get('status') != 'matched':
+        mapping = bundle.manifest.get('provenance', {}).get('msms_link_statuses', {}).get(fid, {})
+        if mapping.get('status') in ('precursor_mismatch', 'metadata_missing', 'out_of_range'):
+            reason = 'msms_mapping_failed'
+        elif fid in linked and status.get('status') != 'matched':
             reason = 'matching_incomplete'
         elif status.get('truncated'):
             reason = 'candidate_truncated'
