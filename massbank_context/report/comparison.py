@@ -80,9 +80,10 @@ def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limi
             eligibility[fid] = dict(reason='eligible',inchikey=ik,
                                     representative_feature_id=representative['feature_id'])
     def encode_cursor(**extra):
-        return base64.urlsafe_b64encode(canonical_json(dict(analysis_id=analysis_id, revision=revision,
-            filter=filter_hash, limit=limit, page_size=page_size, **extra)).encode()).decode()
-    next_cursor = encode_cursor(offset=offset+page_size) if not detail_page and offset+page_size < len(ids) else None
+        value = dict(analysis_id=analysis_id, revision=revision,filter=filter_hash,limit=limit,page_size=page_size)
+        value.update(extra)
+        return base64.urlsafe_b64encode(canonical_json(value).encode()).decode()
+    next_cursor = encode_cursor(offset=offset+page_size,page_size=limit) if not detail_page and offset+page_size < len(ids) else None
     evidence.sort(key=lambda e:e['evidence_id'])
     n_evidence = len(evidence)
     if evidence_offset > n_evidence:
