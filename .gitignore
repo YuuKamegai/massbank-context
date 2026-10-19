@@ -11,6 +11,7 @@ __pycache__/
 # 解釈し、パッケージ本体の massbank_context/index/ まで無視する。追跡済みの
 # ファイルは影響を受けないが、そこに新しいモジュールを足すと静かに追跡漏れする。
 /index/
+/artifacts/
 *.sqlite
 
 # MassBank の上流リポジトリは、それぞれ独立した Git 履歴とライセンスを持つ。

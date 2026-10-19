@@ -11,6 +11,8 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+ARTIFACTS_PATH = Path(os.environ.get('MASSBANK_CONTEXT_ARTIFACTS', BASE_DIR / 'artifacts'))
+
 INDEX_PATH = Path(os.environ.get(
     "MASSBANK_CONTEXT_INDEX", BASE_DIR / "index" / "massbank.sqlite"))
 
