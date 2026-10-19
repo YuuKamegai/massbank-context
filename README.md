@@ -6,6 +6,13 @@
 
 ## できること
 
+- **根拠付き2群比較**: `load_evidence_bundle` → `set_analysis_context` →
+  `match_feature_spectra` → `resolve_candidate_evidence` → `get_comparison_evidence` →
+  `draft_comparison_findings`。既存注釈とMassBank候補を保持し、会話側LLMが解釈する。
+  [利用手順](docs/workflows/two-group-interpretation.md)、[入力契約](docs/contracts/evidence-bundle-v2.md)。
+  中間成果物は`MASSBANK_CONTEXT_ARTIFACTS`（既定`artifacts/`）へ保存し、再起動後も復元する。
+  新exportの上流実装と実MCP経路の検証状況は検証記録を参照する。
+
 - **索引の構築とスペクトル照合**（Phase 1）: MassBank-RDF の TTL からローカル索引を
   作り、実験スペクトルを IDF 重み付きカバレッジで照合する。
 - **パスウェイ活性同定**（Phase 2〜3。設計書は

@@ -4,6 +4,12 @@ import asyncio
 from massbank_context import server
 
 EXPECTED_TOOLS = sorted([
+    "load_evidence_bundle",
+    "set_analysis_context",
+    "match_feature_spectra",
+    "resolve_candidate_evidence",
+    "get_comparison_evidence",
+    "draft_comparison_findings",
     "draft_pathway_findings",
     "index_status",
     "inspect_spectrum",
