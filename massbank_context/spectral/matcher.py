@@ -106,7 +106,7 @@ def _cosine(matched_pairs: list[tuple[float, float]],
     return dot / (norm_q * norm_r)
 
 
-def match_spectrum(conn: sqlite3.Connection,
+def _match_candidates(conn: sqlite3.Connection,
                    spectrum: QuerySpectrum,
                    acquisition_class: str,
                    precursor_tolerance: float = DEFAULT_PRECURSOR_TOLERANCE,
@@ -203,4 +203,29 @@ def match_spectrum(conn: sqlite3.Connection,
 
     # 並び順を決めるのは weighted_score だけ。同点は accession で決定的にする。
     candidates.sort(key=lambda c: (-c.weighted_score, c.accession))
-    return candidates[:top_k]
+    return candidates
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    """取得済み候補と、表示外の候補数を分離する。"""
+    candidates: list[MatchCandidate]
+    n_total: int
+    truncated: bool
+    boundary_tie_count: int
+
+
+def match_spectrum_result(conn, spectrum, acquisition_class,
+                          precursor_tolerance=DEFAULT_PRECURSOR_TOLERANCE, top_k=5):
+    if type(top_k) is not int or not 1 <= top_k <= 20:
+        raise ValueError('top_kは1〜20です')
+    candidates = _match_candidates(conn, spectrum, acquisition_class, precursor_tolerance)
+    shown = candidates[:top_k]
+    ties = sum(c.weighted_score == shown[-1].weighted_score for c in candidates[top_k:]) if shown else 0
+    return MatchResult(shown, len(candidates), len(candidates) > top_k, ties)
+
+
+def match_spectrum(conn, spectrum, acquisition_class,
+                   precursor_tolerance=DEFAULT_PRECURSOR_TOLERANCE, top_k=10):
+    """旧ツールの契約と順位を維持する。"""
+    return _match_candidates(conn, spectrum, acquisition_class, precursor_tolerance)[:top_k]
