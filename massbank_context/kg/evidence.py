@@ -1,6 +1,7 @@
 """候補別にRDF取得結果と来歴を結び付ける。"""
 import sqlite3
 import hashlib
+from contextlib import closing
 from datetime import datetime, timezone
 from massbank_context.core import config
 from massbank_context.core.evidence_ids import stable_id, canonical_json
@@ -28,6 +29,9 @@ class EvidenceAdapter(PubChemPathwayAdapter):
                 ik = binding['value_inchikey']['value']
                 if not isinstance(uri, str) or not uri.startswith(('http://','https://')) or ik not in inchikeys:
                     raise ValueError('関係URIまたは照会キーが不正です')
+                for key in ('pathway_label','pathway_organism'):
+                    if key in binding and (not isinstance(binding[key],dict) or not isinstance(binding[key].get('value'),str)):
+                        raise ValueError('任意bindingの型が不正です')
             except (KeyError, TypeError, ValueError) as exc:
                 raise UpstreamError('SPARQL bindingが不正です') from exc
             result.setdefault(ik, []).append(dict(
@@ -103,9 +107,10 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
     if config.INDEX_PATH.is_file():
         with config.INDEX_PATH.open('rb') as stream:
             catalog_provenance['index_hash'] = hashlib.file_digest(stream, 'sha256').hexdigest()
-        with sqlite3.connect(config.INDEX_PATH.resolve().as_uri() + '?mode=ro', uri=True) as conn:
+        with closing(sqlite3.connect(config.INDEX_PATH.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+            catalog_keys = sorted({c['inchikey'] for c in candidates if c['inchikey']})
             catalog = read_candidate_catalog(conn, accessions=[c['source_id'] for c in candidates
-                                                              if c['source'] == 'massbank'], inchikeys=keys)
+                                                              if c['source'] == 'massbank'], inchikeys=catalog_keys)
     payload = dict(lookups=lookups, evidence=evidence, catalog=catalog,
                    catalog_provenance=catalog_provenance,
                    scope=['massbank_metadata', 'pubchem_pathways'])

@@ -54,3 +54,16 @@ def test_content_change_and_direction_rejected(tmp_path):
     path.write_text(json.dumps(data))
     with pytest.raises(BundleError, match='方向'):
         load_bundle(path)
+
+
+def test_legacy_import_cannot_restore_missing_population(tmp_path):
+    from test_contract import GOOD
+    from massbank_context.experiment.legacy_bundle import import_legacy
+    from massbank_context.report.comparison_population import build_population, compute_pathways
+    path=tmp_path/'legacy.tsv'
+    path.write_text(GOOD,encoding='utf-8')
+    bundle=import_legacy(path)
+    assert len(bundle.features)==2
+    assert bundle.population_complete is False
+    projection=build_population(bundle,list(bundle.annotations),{})
+    assert compute_pathways(projection,[],'10090')['reason']=='population_incomplete'

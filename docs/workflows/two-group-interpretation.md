@@ -12,6 +12,7 @@
 7. `get_comparison_evidence`で根拠版を固定して全必要ページを取得する。
    特徴量ページはnext_cursor、RDF等の詳細はnext_evidence_cursorを同じツールのcursorへ渡す。
    各詳細ページは最大64根拠。lookupsは状態と件数を返し、巨大なhitsを二重送信しない。
+   特徴量ページは約128KiBを目安に件数を減らすため、要求limitより少ない行でnext_cursorが返る場合がある。
    cursorが失効したら初めから取得し直す。大量の根拠は特徴量IDを絞って段階的に読む。
 8. `draft_comparison_findings`で事実と解釈の材料を取得する。経路検定は任意。
 

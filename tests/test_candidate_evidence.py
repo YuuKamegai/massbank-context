@@ -40,7 +40,9 @@ def test_refresh_failure_keeps_old_version_but_not_current_success(tmp_path):
 
 def test_invalid_sparql_payload_is_failure_not_empty():
     from massbank_context.kg.evidence import EvidenceAdapter, fetch_pathway_evidence
-    for payload in ({'error':'query timeout'}, {}, {'results':{'bindings':[{}]}}):
+    invalid_optional = {'results':{'bindings':[dict(value_inchikey={'value':KEY_A},
+        pathway={'value':'http://example.org/PW1'},pathway_organism={'value':None})]}}
+    for payload in ({'error':'query timeout'}, {}, {'results':{'bindings':[{}]}}, invalid_optional):
         adapter = EvidenceAdapter('https://fixture.example', transport=lambda *args:payload)
         result = fetch_pathway_evidence(adapter,[KEY_A])
         assert result[KEY_A]['status'] == 'failed'

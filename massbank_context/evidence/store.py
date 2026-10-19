@@ -1,6 +1,7 @@
 """解析入力と不変の根拠版をSQLiteへ保存する。"""
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from massbank_context.core.evidence_ids import canonical_json, stable_id
@@ -26,8 +27,14 @@ class EvidenceStore:
                     PRIMARY KEY(analysis_id, path));
             ''')
 
+    @contextmanager
     def connect(self):
-        return sqlite3.connect(self.path, timeout=30)
+        conn = sqlite3.connect(self.path, timeout=30)
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def register(self, bundle: EvidenceBundle) -> str:
         data = asdict(bundle)

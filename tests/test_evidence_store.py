@@ -38,3 +38,14 @@ def test_outdated_writer_does_not_overwrite_new_state(tmp_path):
     with pytest.raises(ValueError, match='stale_revision'):
         store.put_snapshot(aid, 'matches', {'number': 1}, expected_revision=revision)
     assert store.current(aid,'matches')['number'] == 2
+
+
+def test_connection_context_releases_windows_file_handles(tmp_path):
+    import sqlite3
+    import pytest
+    from massbank_context.evidence.store import EvidenceStore
+    store = EvidenceStore(tmp_path/'store')
+    with store.connect() as conn:
+        conn.execute('SELECT 1')
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute('SELECT 1')

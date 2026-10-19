@@ -59,3 +59,23 @@ def test_explicit_unqueried_lookup_counts_as_unqueried(tmp_path):
         dict(candidate_id=candidate.candidate_id,status='not_queried')]))
     summary = get_evidence(store,aid)['summary']
     assert summary['n_not_queried'] == summary['n_candidates']
+
+
+def test_large_feature_page_keeps_reachable_next_page(tmp_path):
+    import json
+    from evidence_helpers import rewrite_table
+    from massbank_context.evidence.store import EvidenceStore
+    from massbank_context.experiment.bundle import load_bundle
+    from massbank_context.report.comparison import get_evidence
+    path=make_bundle(tmp_path/'input')
+    rewrite_table(path,'annotations',lambda rows:[r.update(name='x'*18000) for r in rows])
+    store=EvidenceStore(tmp_path/'store')
+    aid=store.register(load_bundle(path))
+    page=get_evidence(store,aid,limit=8)
+    assert len(page['features']) < 8
+    assert len(json.dumps(page,ensure_ascii=False).encode()) < 128*1024
+    ids={f['feature_id'] for f in page['features']}
+    while page['next_cursor']:
+        page=get_evidence(store,aid,limit=8,cursor=page['next_cursor'])
+        ids.update(f['feature_id'] for f in page['features'])
+    assert len(ids)==8

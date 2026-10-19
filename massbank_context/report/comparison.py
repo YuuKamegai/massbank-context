@@ -19,7 +19,7 @@ def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limi
     candidates = candidate_dicts(bundle, matches)
     ids = select_ids([f.feature_id for f in bundle.features], feature_ids)
     filter_hash = stable_id('filter', [canonical_json(ids)])
-    offset, evidence_offset, detail_page = 0, 0, False
+    offset, evidence_offset, detail_page, page_size = 0, 0, False, limit
     cur = {}
     if cursor:
         try:
@@ -35,10 +35,13 @@ def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limi
         if type(offset) is not int or offset < 0 or offset > len(ids):
             raise ValueError('invalid_cursor')
         detail_page = cur.get('mode') == 'evidence'
+        page_size = cur.get('page_size',limit)
+        if type(page_size) is not int or not 1 <= page_size <= limit:
+            raise ValueError('invalid_cursor')
         evidence_offset = cur.get('evidence_offset', 0)
         if type(evidence_offset) is not int or evidence_offset < 0:
             raise ValueError('invalid_cursor')
-    shown = set(ids[offset:offset+limit])
+    shown = set(ids[offset:offset+page_size])
     selected = [c for c in candidates if c['feature_id'] in shown]
     candidate_ids = {c['candidate_id'] for c in selected}
     lookups_by_id = {l['candidate_id']: l for l in lookup_state.get('lookups', [])}
@@ -53,7 +56,9 @@ def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limi
                     record['accession'] == (c['source_id'] if c['source'] == 'massbank' else None)):
                 evidence.append(dict(record, evidence_id=stable_id('evidence', [c['candidate_id'], canonical_json(record)]),
                                      candidate_id=c['candidate_id'], feature_id=c['feature_id'],
-                                     source='massbank_rdf_index', provenance=lookup_state.get('catalog_provenance', {})))
+                                     source='massbank_rdf_index',
+                                     status='resolved' if record.get('accession') or record.get('compound') or record.get('classes') else 'empty',
+                                     provenance=lookup_state.get('catalog_provenance', {})))
     counts = Counter(l['status'] for l in lookup_state.get('lookups', [])
                      if l['candidate_id'] in {c['candidate_id'] for c in candidates})
     linked = {l.feature_id for l in bundle.spectrum_links}
@@ -76,14 +81,14 @@ def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limi
                                     representative_feature_id=representative['feature_id'])
     def encode_cursor(**extra):
         return base64.urlsafe_b64encode(canonical_json(dict(analysis_id=analysis_id, revision=revision,
-            filter=filter_hash, limit=limit, **extra)).encode()).decode()
-    next_cursor = encode_cursor(offset=offset+limit) if not detail_page and offset+limit < len(ids) else None
+            filter=filter_hash, limit=limit, page_size=page_size, **extra)).encode()).decode()
+    next_cursor = encode_cursor(offset=offset+page_size) if not detail_page and offset+page_size < len(ids) else None
     evidence.sort(key=lambda e:e['evidence_id'])
     n_evidence = len(evidence)
     if evidence_offset > n_evidence:
         raise ValueError('invalid_cursor')
     next_evidence = encode_cursor(offset=offset, mode='evidence', evidence_offset=evidence_offset+64) if evidence_offset+64 < n_evidence else None
-    return dict(analysis_id=analysis_id, evidence_revision=revision,
+    result = dict(analysis_id=analysis_id, evidence_revision=revision,
                 context_revision=context.get('context_revision'), context=context,
                 comparison=bundle.manifest['comparison'], summary=summary,
                 population_derivation=dict(n_features_before=bundle.manifest['population'].get('n_features_before'),
@@ -100,3 +105,10 @@ def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limi
                 detail_page=detail_page, n_evidence=n_evidence, evidence_truncated=next_evidence is not None,
                 next_evidence_cursor=next_evidence,
                 n_selected=len(ids))
+    # 件数上限より先にバイト上限へ達した場合も、全件取得できるcursorを残す。
+    if not detail_page and len(canonical_json(result).encode()) > 128*1024 and page_size > 1:
+        retry = dict(analysis_id=analysis_id,revision=revision,filter=filter_hash,
+                     limit=limit,page_size=max(1,page_size//2),offset=offset)
+        return get_evidence(store,analysis_id,feature_ids=feature_ids,
+                            cursor=base64.urlsafe_b64encode(canonical_json(retry).encode()).decode(),limit=limit)
+    return result

@@ -19,7 +19,7 @@ __all__ = ['load_evidence_bundle', 'set_analysis_context', 'match_feature_spectr
 
 def _invoke(operation):
     try:
-        return json_payload(round_floats(operation(EvidenceStore(config.ARTIFACTS_PATH))))
+        return json_payload(_compact(operation(EvidenceStore(config.ARTIFACTS_PATH))))
     except (ValueError, OSError, sqlite3.Error) as exc:
         code = getattr(exc, 'code', 'invalid_evidence_request')
         for known in ('missing_index', 'incompatible_index', 'stale_cursor', 'invalid_cursor', 'stale_revision'):
@@ -27,6 +27,17 @@ def _invoke(operation):
                 code = known
         return json_payload({'error': {'code': code, 'message': str(exc),
                                        'required_action': '入力・解析ID・根拠版を確認し、必要な取得を再実行してください。'}})
+
+
+def _compact(value):
+    """小さなp値などを0へ丸めずに桁数を抑える。旧ツールの書式は変えない。"""
+    if isinstance(value, dict):
+        return {k:_compact(v) for k,v in value.items()}
+    if isinstance(value, (list,tuple)):
+        return [_compact(v) for v in value]
+    if isinstance(value, float):
+        return float(format(value,'.8g')) if 0 < abs(value) < 1e-6 else round(value,6)
+    return value
 
 
 def load_evidence_bundle(path: str) -> str:
