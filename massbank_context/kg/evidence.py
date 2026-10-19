@@ -1,5 +1,6 @@
 """候補別にRDF取得結果と来歴を結び付ける。"""
 import sqlite3
+import hashlib
 from datetime import datetime, timezone
 from massbank_context.core import config
 from massbank_context.core.evidence_ids import stable_id, canonical_json
@@ -89,11 +90,15 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
                                  source='pubchem_rdf', endpoint=snap['endpoint'],
                                  query_version=snap['query_version'], fetched_at=snap['fetched_at']))
     catalog = []
+    catalog_provenance = {}
     if config.INDEX_PATH.is_file():
+        with config.INDEX_PATH.open('rb') as stream:
+            catalog_provenance['index_hash'] = hashlib.file_digest(stream, 'sha256').hexdigest()
         with sqlite3.connect(config.INDEX_PATH.resolve().as_uri() + '?mode=ro', uri=True) as conn:
             catalog = read_candidate_catalog(conn, accessions=[c['source_id'] for c in candidates
                                                               if c['source'] == 'massbank'], inchikeys=keys)
     payload = dict(lookups=lookups, evidence=evidence, catalog=catalog,
+                   catalog_provenance=catalog_provenance,
                    scope=['massbank_metadata', 'pubchem_pathways'])
     store.put_snapshot(analysis_id, 'lookups', payload)
     return dict(n_resolved=sum(x['status'] == 'resolved' for x in lookups),
