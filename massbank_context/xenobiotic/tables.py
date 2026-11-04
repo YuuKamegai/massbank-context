@@ -33,9 +33,10 @@ __all__ = [
 
 ADDUCT_TABLE_VERSION = "xeno-adducts-2"
 SHIFT_TABLE_VERSION = "xeno-shifts-1"
-THRESHOLDS_VERSION = "xeno-thresholds-2026-11-05"
+THRESHOLDS_VERSION = "xeno-thresholds-2026-11-05-r2"
 
-# 実データの較正で決めた値（選び方は spec §10.4）。陽性の期待を全部満たす値は無く、spec §8 の合格の条件は満たしていない。
+# 実データの較正の値（spec §10.0）。陽性の期待を全部満たす値は無く、spec §8 の合格の条件は満たしていない。
+# r2 はおとりの条件を満たす点が無く規則で選べなかったので、値は r1 のまま（版だけ r2）。
 THRESHOLDS = {
     "msms_shared_min": 0.15,
     "msms_top_n": 10,

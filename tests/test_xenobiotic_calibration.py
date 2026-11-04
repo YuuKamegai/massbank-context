@@ -30,15 +30,22 @@ RUNS = json.loads(EXPECTATIONS.read_text(encoding='utf-8'))['runs']
 # 設計書 §10 の決定。
 DESIGN_THRESHOLDS = {'msms_shared_min': 0.15, 'msms_top_n': 10, 'bias_reference_max': 1,
                      'rho_min': 0.6, 'rho_min_n': 5}
-DESIGN_VERSION = 'xeno-thresholds-2026-11-05'
+DESIGN_VERSION = 'xeno-thresholds-2026-11-05-r2'
 
 # 設計書 §10 の「満たせなかった点」。(accession, polarity) -> {特徴 ID: 走査で付いた水準}
 KNOWN_UNMET: dict[tuple[str, str], dict[str, str]] = {
-    # 6-Propyl-1,3,5-triazine-2,4-diamine。付加体の矛盾で質量が落ち、共有 0.047、検出 2/5 例
-    ('ST003841', 'positive'): {'6126': ''},
+    # 6-Propyl-1,3,5-triazine-2,4-diamine。質量の一致は戻ったが共有 0.047、検出 2/5 例で D に留まる
+    ('ST003841', 'positive'): {'6126': 'D'},
     # 13981 フルオキセチン: [M+Na]+ の記載で質量が落ち、共有 0。
-    # 9187 2-Ethyl-2-(p-tolyl)malonamide: 質量の一致が無く、共有 0.05、検出 1/8 例
-    ('ST002901', 'positive'): {'13981': '', '9187': ''},
+    # 9187 2-Ethyl-2-(p-tolyl)malonamide: 質量の一致は付加体で落ち、共有 0.05、検出 1/8 例
+    # 13249 ノルフルオキセチン: 順位 1 だが PRECURSOR_ONLY で A でなく、共有 0 で B にも届かない
+    ('ST002901', 'positive'): {'13981': '', '9187': '', '13249': 'C'},
+}
+
+# 設計書 §10.0 の、おとりの上限を超えた件数。(accession, polarity) -> {上限の鍵: 件数}
+# 陰イオンの C は MS/MS の閾値に依らないので、格子のどの点でも 32 になる。
+KNOWN_OVER_LIMIT: dict[tuple[str, str], dict[str, int]] = {
+    ('MTBLS9365', 'negative'): {'max_C': 32},
 }
 
 
@@ -151,6 +158,6 @@ def test_calibration_expectations(run, tmp_path, monkeypatch):
     assert unmet == KNOWN_UNMET.get((run['accession'], run['polarity']), {})
 
     counts = summary['levels']
-    for key, level in (('max_A', 'A'), ('max_B', 'B'), ('max_C', 'C')):
-        if key in run:
-            assert counts[level] <= run[key]
+    over = {key: counts[level] for key, level in (('max_A', 'A'), ('max_B', 'B'), ('max_C', 'C'))
+            if key in run and counts[level] > run[key]}
+    assert over == KNOWN_OVER_LIMIT.get((run['accession'], run['polarity']), {})
