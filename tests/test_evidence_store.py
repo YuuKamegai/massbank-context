@@ -40,6 +40,18 @@ def test_outdated_writer_does_not_overwrite_new_state(tmp_path):
     assert store.current(aid,'matches')['number'] == 2
 
 
+def test_head_revision_reads_the_current_snapshot_id(tmp_path):
+    from massbank_context.experiment.bundle import load_bundle
+    from massbank_context.evidence.store import EvidenceStore
+    store = EvidenceStore(tmp_path / 'store')
+    aid = store.register(load_bundle(make_bundle(tmp_path / 'input')))
+    assert store.head_revision(aid, 'matches') is None
+    store.put_snapshot(aid, 'matches', {'number': 1})
+    new = store.put_snapshot(aid, 'matches', {'number': 2})
+    assert store.head_revision(aid, 'matches') == new
+    assert store.get_snapshot(aid, new) == store.current(aid, 'matches')
+
+
 def test_connection_context_releases_windows_file_handles(tmp_path):
     import sqlite3
     import pytest

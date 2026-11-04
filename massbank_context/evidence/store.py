@@ -118,11 +118,16 @@ class EvidenceStore:
             raise ValueError('根拠版が見つかりません')
         return json.loads(row[0])
 
-    def current(self, analysis_id: str, kind: str) -> dict:
+    def head_revision(self, analysis_id: str, kind: str) -> str | None:
+        """種別の最新のスナップショットの版。無ければ None。"""
         with self.connect() as conn:
             row = conn.execute('SELECT revision FROM heads WHERE analysis_id=? AND kind=?',
                                (analysis_id, kind)).fetchone()
-        return self.get_snapshot(analysis_id, row[0]) if row else {}
+        return row[0] if row else None
+
+    def current(self, analysis_id: str, kind: str) -> dict:
+        revision = self.head_revision(analysis_id, kind)
+        return self.get_snapshot(analysis_id, revision) if revision else {}
 
     def latest_revision(self, analysis_id: str) -> str:
         with self.connect() as conn:

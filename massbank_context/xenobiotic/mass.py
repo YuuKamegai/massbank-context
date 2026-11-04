@@ -22,6 +22,7 @@ __all__ = [
     "MassRelation",
     "validate_ppm_bands",
     "tolerance_ppm",
+    "adduct_recognized",
     "find_mass_relations",
 ]
 
@@ -83,6 +84,12 @@ def _normalize_adduct(text: str) -> str:
 _KNOWN_LABELS = frozenset(
     ion_label(a.name, loss) for a in ADDUCTS for loss in (None, *SOURCE_LOSSES)
 )
+
+
+def adduct_recognized(text: str) -> bool:
+    """特徴の付加体の記載が表のイオンとして読めるか（空白だけの記載は記載なしと同じ）。"""
+    label = _normalize_adduct(text)
+    return not label or label in _KNOWN_LABELS
 
 
 def find_mass_relations(
