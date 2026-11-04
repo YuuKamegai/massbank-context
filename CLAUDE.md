@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 現状は Phase 1（索引ビルド + バイアス無し照合）に加え、パスウェイ活性同定の
 Phase A〜D（`experiment/` `kg/` `stats/` `report/`、ツール 4 本）まで。
 設計は [docs/superpowers/specs/2026-08-31-pathway-activity-design.md](docs/superpowers/specs/2026-08-31-pathway-activity-design.md)。
+外来の分子（薬物・代謝物など）の走査（`xenobiotic/`、ツール 3 本）も入っている。
+設計は [docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md](docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md)。
 `bias/` `catalog/` と spec §7.2 のツール 10 本のうち残りは未実装。
 
 ## コマンド
@@ -53,6 +55,7 @@ kg/         InChIKey → パスウェイ（PubChem SPARQL + SQLite キャッシ�
 index/      索引ビルド CLI・SQLite スキーマ・IDF 背景・質量誤差プロファイル
 spectral/   照合エンジン
 report/     事実と仮説を分けた骨組み
+xenobiotic/ 外来の分子の登録と走査（質量関係・MS/MS・検出パターンの 3 つの筋から水準を付ける）
 tools/      MCP 公開層（実体はここ、server.py は登録するだけ）
 server.py   FastMCP ファサード
 ```

@@ -19,6 +19,9 @@ EXPECTED_TOOLS = sorted([
     "match_spectra",
     "pathway_activity",
     "resolve_pathways",
+    "register_xenobiotics",
+    "screen_xenobiotic_features",
+    "get_xenobiotic_screen",
 ])
 
 

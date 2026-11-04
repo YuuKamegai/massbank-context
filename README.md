@@ -22,6 +22,12 @@
   （記述 + Wilcoxon 符号順位）を返す。ツールは `load_differential` /
   `resolve_pathways` / `pathway_activity` / `draft_pathway_findings` の 4 本。
 
+- **外来の分子の走査**（設計書は
+  `docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md`）:
+  `register_xenobiotics` で薬物などを登録し、`screen_xenobiotic_features` で全特徴量を
+  質量関係・MS/MS・検出パターンの 3 つの筋から走査し、`get_xenobiotic_screen` で行を引く。
+  全行は TSV に書き、水準は判定ではなく材料として返す。
+
 MassBank レコードのメタデータ取得（`catalog/` `bias/`）は未実装。
 
 ## ⚠ 外部への通信

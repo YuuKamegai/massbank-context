@@ -28,6 +28,10 @@ from massbank_context.tools import evidence_tools as _evidence_tools
 for _name in _evidence_tools.__all__:
     mcp.tool(structured_output=False)(getattr(_evidence_tools, _name))
 
+from massbank_context.tools import xenobiotic_tools as _xenobiotic_tools
+for _name in _xenobiotic_tools.__all__:
+    mcp.tool(structured_output=False)(getattr(_xenobiotic_tools, _name))
+
 # structured_output=False は必須。付けないと FastMCP が outputSchema を導出し、
 # MCP が同じ内容を content と structuredContent の両方で送る（＝2 倍）。
 mcp.tool(structured_output=False)(_index_status)
