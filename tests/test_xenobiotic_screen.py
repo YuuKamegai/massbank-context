@@ -393,6 +393,71 @@ def test_failed_snapshot_leaves_no_tsv(registered, monkeypatch):
     assert list(_default_output(registered).parent.iterdir()) == []
 
 
+def _assert_earlier_screen_is_intact(store, aid, target, revision, latest, raw):
+    assert store.head_revision(aid, 'xenobiotic_screen') == revision
+    assert store.latest_revision(aid) == latest
+    assert target.read_bytes() == raw
+    assert list(target.parent.iterdir()) == [target]
+
+
+@pytest.mark.parametrize('blocked', ['.tsv', '.tmp'], ids=['locked_target', 'placing_new_file'])
+def test_failed_replace_keeps_earlier_screen(screened_store, monkeypatch, blocked):
+    # Windows では前の TSV を Excel が開いていると os.replace が PermissionError になる
+    store, aid = screened_store
+    target = _default_output(screened_store)
+    raw, latest = target.read_bytes(), store.latest_revision(aid)
+    revision = store.head_revision(aid, 'xenobiotic_screen')
+    real_replace = screen.os.replace
+
+    def replace_file(source, destination):
+        if str(source).endswith(blocked):
+            raise PermissionError('別のプロセスが使用中です')
+        real_replace(source, destination)
+
+    monkeypatch.setattr(screen.os, 'replace', replace_file)
+    with pytest.raises(PermissionError):
+        run_screen(store, aid, test_group='Drug', ppm=10)
+    _assert_earlier_screen_is_intact(store, aid, target, revision, latest, raw)
+
+
+def test_failed_snapshot_restores_earlier_tsv(screened_store, monkeypatch):
+    store, aid = screened_store
+    target = _default_output(screened_store)
+    raw, latest = target.read_bytes(), store.latest_revision(aid)
+    revision = store.head_revision(aid, 'xenobiotic_screen')
+
+    def refuse(*args, **kwargs):
+        raise ValueError('stale_revision: 処理中に更新されました')
+
+    monkeypatch.setattr(store, 'put_snapshot', refuse)
+    with pytest.raises(ValueError, match='^stale_revision'):
+        run_screen(store, aid, test_group='Drug', ppm=10)
+    _assert_earlier_screen_is_intact(store, aid, target, revision, latest, raw)
+
+
+def test_directory_output_path_is_refused_before_commit(screened_store, tmp_path):
+    store, aid = screened_store
+    revision = store.head_revision(aid, 'xenobiotic_screen')
+    latest = store.latest_revision(aid)
+    folder = tmp_path / 'folder'
+    folder.mkdir()
+    with pytest.raises(XenobioticError) as info:
+        run_screen(store, aid, test_group='Drug', ppm=10, output_path=str(folder))
+    assert info.value.code == 'invalid_xenobiotic_request'
+    assert folder.is_dir() and list(folder.iterdir()) == []
+    assert store.head_revision(aid, 'xenobiotic_screen') == revision
+    assert store.latest_revision(aid) == latest
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith('folder')) == ['folder']
+
+
+def test_successful_rescreen_replaces_tsv_without_leftovers(screened_store):
+    store, aid = screened_store
+    summary = run_screen(store, aid, test_group='Drug', ppm=10)
+    target = _default_output(screened_store)
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == summary['output_sha256']
+    assert list(target.parent.iterdir()) == [target]
+
+
 def test_index_is_closed_when_matching_fails(registered, monkeypatch):
     opened = []
 

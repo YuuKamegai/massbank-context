@@ -366,16 +366,35 @@ def _tsv_bytes(rows: list[list]) -> bytes:
 
 def _publish(store: EvidenceStore, analysis_id: str, payload: dict, target: Path, data: bytes,
              base_revision: str) -> str:
-    """TSV とスナップショットを揃えて残す。版が古ければどちらも残さない。"""
+    """TSV とスナップショットを揃えて残す。どの段で失敗しても前の状態に戻す。
+
+    ファイルの差し替えを全部済ませてから確定する。前の TSV を別のアプリが開いていて
+    動かせないときは、スナップショットを進める前にここで止まる。
+    """
+    if target.is_dir():
+        raise XenobioticError(f"output_path がディレクトリです: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + '.tmp')
+    backup = target.with_name(target.name + '.bak')
+    revision = None
+    moved_aside = placed = False
     try:
         temporary.write_bytes(data)
+        if target.exists():
+            os.replace(target, backup)
+            moved_aside = True
+        os.replace(temporary, target)
+        placed = True
         revision = store.put_snapshot(analysis_id, SNAPSHOT_KIND, payload,
                                       expected_revision=base_revision)
-        os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
+        if revision is not None:
+            backup.unlink(missing_ok=True)
+        elif moved_aside:
+            os.replace(backup, target)
+        elif placed:
+            target.unlink(missing_ok=True)
     return revision
 
 
