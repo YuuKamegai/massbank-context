@@ -16,6 +16,16 @@ class Feature:
     mean_a: float | None
     mean_b: float | None
     significant: bool
+    adduct: str | None = None
+
+
+@dataclass(frozen=True)
+class Sample:
+    """v3 の試料。group は 'a' / 'b' / ''（比較に入らない試料）。"""
+    sample_id: str
+    group: str
+    role: str
+    injection_order: int | None
 
 
 @dataclass(frozen=True)

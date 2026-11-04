@@ -1,12 +1,14 @@
-"""全特徴量を保持したv2根拠バンドルの検証。"""
+"""全特徴量を保持したv2/v3根拠バンドルの検証。"""
 import csv
 import hashlib
+import io
 import json
 import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from massbank_context.core.evidence_ids import stable_id, canonical_json
-from massbank_context.core.evidence_models import Candidate, EvidenceBundle, Feature, SpectrumLink
+from massbank_context.core.evidence_models import Candidate, EvidenceBundle, Feature, Sample, SpectrumLink
 from massbank_context.query.loader import load_spectra_file
 
 INCHIKEY_PATTERN = re.compile(r'^[A-Z]{14}-[A-Z]{10}-[A-Z]$')
@@ -16,6 +18,11 @@ ANNOTATION_COLUMNS = ['annotation_id', 'feature_id', 'source', 'name', 'inchikey
                       'rank', 'provenance_json', 'curation_json', 'status']
 LINK_COLUMNS = ['feature_id', 'spectrum_file', 'spectrum_id',
                 'source_analysis_id', 'mapping_evidence']
+SAMPLE_COLUMNS = ['sample_id', 'group', 'role', 'injection_order']
+INTENSITY_COLUMNS = ['feature_id', 'sample_id', 'value', 'detected']
+SUPPORTED_CONTRACT_VERSIONS = (2, 3)
+POLARITIES = ('positive', 'negative')
+INTENSITIES_STAGES = ('pre_imputation', 'post_imputation')
 
 
 class BundleError(ValueError):
@@ -48,16 +55,70 @@ def _number(value, column):
     return number
 
 
-def _table(path, columns):
-    with path.open(encoding='utf-8-sig', newline='') as stream:
-        reader = csv.DictReader(stream, delimiter='\t')
-        names = reader.fieldnames or []
-        if len(names) != len(set(names)) or not set(columns) <= set(names):
-            raise BundleError(f'必須列または列名が不正です: {path.name}')
-        rows = list(reader)
+def _table_text(text, name, columns):
+    reader = csv.DictReader(io.StringIO(text, newline=''), delimiter='\t')
+    names = reader.fieldnames or []
+    if len(names) != len(set(names)) or not set(columns) <= set(names):
+        raise BundleError(f'必須列または列名が不正です: {name}')
+    rows = list(reader)
     if any(None in row or any(v is None for v in row.values()) for row in rows):
         raise BundleError('TSV列数が一致しません')
     return rows
+
+
+def _table(path, columns):
+    return _table_text(path.read_text(encoding='utf-8-sig'), path.name, columns)
+
+
+def parse_samples(text: str) -> tuple[Sample, ...]:
+    """samples.tsv を検証して読む。group は a / b / 空のみ。"""
+    samples, seen = [], set()
+    for row in _table_text(text, 'samples.tsv', SAMPLE_COLUMNS):
+        sid = row['sample_id']
+        if not sid or sid in seen:
+            raise BundleError('試料IDが空または重複しています', 'sample_id')
+        seen.add(sid)
+        if row['group'] not in ('a', 'b', ''):
+            raise BundleError('試料のgroupはa/b/空のいずれかです', 'group')
+        try:
+            order = int(row['injection_order']) if row['injection_order'] != '' else None
+        except ValueError as exc:
+            raise BundleError('注入順は整数または空です', 'injection_order') from exc
+        samples.append(Sample(sid, row['group'], row['role'], order))
+    return tuple(samples)
+
+
+def parse_intensities(text: str, feature_ids: set[str], samples: Sequence[Sample]):
+    """intensities.tsv を検証して読む。全特徴 x 群a/bの試料が過不足なく揃う契約。
+
+    戻り値は feature_id -> sample_id -> (value, detected)。detected の空は None。
+    groupが空の試料（QCなど）の行は契約違反として拒否する（黙って捨てない）。
+    """
+    by_id = {s.sample_id: s for s in samples}
+    expected = {s.sample_id for s in samples if s.group}
+    matrix: dict = {}
+    for row in _table_text(text, 'intensities.tsv', INTENSITY_COLUMNS):
+        fid, sid = row['feature_id'], row['sample_id']
+        if fid not in feature_ids:
+            raise BundleError('値の特徴量IDがfeaturesにありません', 'feature_id')
+        if sid not in by_id:
+            raise BundleError('値の試料IDがsamplesにありません', 'sample_id')
+        if not by_id[sid].group:
+            raise BundleError('比較に入らない試料の値は書けません', 'sample_id')
+        if sid in matrix.setdefault(fid, {}):
+            raise BundleError('特徴量と試料の組が重複しています', 'sample_id')
+        if row['detected'] not in ('true', 'false', ''):
+            raise BundleError('detectedはtrue/false/空のいずれかです', 'detected')
+        detected = None if row['detected'] == '' else row['detected'] == 'true'
+        matrix[fid][sid] = (_number(row['value'], 'value'), detected)
+    if any(set(matrix.get(fid, {})) != expected for fid in feature_ids):
+        raise BundleError('全特徴量と全比較試料の値が揃っていません')
+    return matrix
+
+
+def role_path(manifest: dict, role: str) -> str | None:
+    """manifest の files から役割のパスを返す。無ければ None。"""
+    return next((f['path'] for f in manifest.get('files', []) if f.get('role') == role), None)
 
 
 def _required(data, keys):
@@ -78,8 +139,10 @@ def _load_bundle(path):
     manifest = read_json(path.read_text(encoding='utf-8-sig'))
     _required(manifest, ['contract_name', 'contract_version', 'source_analysis_id',
                          'exporter', 'exported_at', 'comparison', 'population', 'files'])
-    if manifest['contract_name'] != 'massbank-context-evidence' or manifest['contract_version'] != 2:
-        raise BundleError('対応する版はmassbank-context-evidence v2です')
+    if manifest['contract_name'] != 'massbank-context-evidence' or type(manifest['contract_version']) is not int \
+            or manifest['contract_version'] not in SUPPORTED_CONTRACT_VERSIONS:
+        raise BundleError('対応する版はmassbank-context-evidence v2 / v3です')
+    v3 = manifest['contract_version'] == 3
     if not isinstance(manifest['source_analysis_id'], str) or not manifest['source_analysis_id'].strip():
         raise BundleError('出力元解析IDがありません')
     c = manifest['comparison']
@@ -93,6 +156,8 @@ def _load_bundle(path):
         raise BundleError('群別nは正の整数で指定してください')
     if not 0 <= _number(c['q_threshold'], 'q_value') <= 1 or _number(c['log2fc_threshold'], 'threshold') < 0:
         raise BundleError('閾値が不正です')
+    if (v3 or 'polarity' in c) and c.get('polarity') not in POLARITIES:
+        raise BundleError('極性はpositive/negativeで指定してください', 'polarity')
     _required(manifest['exporter'], ['name', 'version'])
     _required(manifest['population'], ['n_features_total', 'population_complete', 'definition', 'exclusions'])
     root, roles, spectra, seen_files = path.parent, {}, {}, set()
@@ -112,12 +177,17 @@ def _load_bundle(path):
                 if key in spectra:
                     raise BundleError('スペクトルIDが重複しています')
                 spectra[key] = spectrum
-        elif role in ('features', 'annotations', 'spectrum_links') and role not in roles:
+        elif (role in ('features', 'annotations', 'spectrum_links')
+              or (v3 and role in ('samples', 'intensities'))) and role not in roles:
             roles[role] = file
         else:
             raise BundleError('ファイル種別が不正または重複しています')
-    if set(roles) != {'features', 'annotations', 'spectrum_links'}:
+    if not {'features', 'annotations', 'spectrum_links'} <= set(roles):
         raise BundleError('必須TSVファイルがありません')
+    if ('samples' in roles) != ('intensities' in roles):
+        raise BundleError('samplesとintensitiesは両方そろえるか両方省いてください')
+    if 'intensities' in roles and manifest.get('intensities_stage') not in INTENSITIES_STAGES:
+        raise BundleError('intensities_stageはpre_imputation/post_imputationで指定してください')
     aid = stable_id('analysis', [canonical_json(manifest)])
     features, ids = [], set()
     for row in _table(roles['features'], FEATURE_COLUMNS):
@@ -126,12 +196,20 @@ def _load_bundle(path):
             raise BundleError('特徴量IDまたは有意判定が不正です')
         ids.add(fid)
         numbers = {key: _number(row[key], key) for key in FEATURE_COLUMNS[2:-1]}
-        features.append(Feature(fid, row['spot_id'], **numbers, significant=row['significant'] == 'true'))
+        features.append(Feature(fid, row['spot_id'], **numbers, significant=row['significant'] == 'true',
+                                adduct=row.get('adduct') or None))
     population = manifest['population']
     if type(population['n_features_total']) is not int or population['n_features_total'] != len(features):
         raise BundleError('特徴量の総数と実際の行数が不一致です')
     if type(population['population_complete']) is not bool:
         raise BundleError('母集団の完全性は真偽値で指定してください')
+    if 'samples' in roles:
+        # 行列は保持しない。検証のためだけに読む（原本は store.read_source で読める）。
+        samples = parse_samples(roles['samples'].read_text(encoding='utf-8-sig'))
+        for key, group in (('n_a', 'a'), ('n_b', 'b')):
+            if sum(x.group == group for x in samples) != c[key]:
+                raise BundleError(f'試料数と{key}が一致しません', key)
+        parse_intensities(roles['intensities'].read_text(encoding='utf-8-sig'), ids, samples)
     annotations, annotation_ids = [], set()
     for row in _table(roles['annotations'], ANNOTATION_COLUMNS):
         if row['feature_id'] not in ids or not row['annotation_id'] or row['annotation_id'] in annotation_ids:

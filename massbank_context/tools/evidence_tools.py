@@ -32,7 +32,7 @@ def _invoke(operation):
 
 
 def load_evidence_bundle(path: str) -> str:
-    """ms-data-parserのv2 manifestまたは旧v1 TSVを読み込む。旧形式は母集団不完全として扱う。"""
+    """ms-data-parserのv2/v3 manifestまたは旧v1 TSVを読み込む。旧形式は母集団不完全として扱う。"""
     def operation(store):
         bundle = import_legacy(Path(path)) if Path(path).suffix.lower() == '.tsv' else load_bundle(Path(path))
         aid = store.register(bundle)

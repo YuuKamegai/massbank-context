@@ -87,6 +87,15 @@ class EvidenceStore:
             raise ValueError('解析IDが見つかりません')
         return _decode(row[0])
 
+    def read_source(self, analysis_id: str, path: str) -> bytes:
+        """登録時に複製した入力ファイルの中身を返す。"""
+        with self.connect() as conn:
+            row = conn.execute('SELECT payload FROM sources WHERE analysis_id=? AND path=?',
+                               (analysis_id, path)).fetchone()
+        if row is None:
+            raise ValueError(f'入力ファイルが保存されていません: {path}')
+        return bytes(row[0])
+
     def put_snapshot(self, analysis_id: str, kind: str, payload: dict, *, expected_revision=None) -> str:
         raw = canonical_json(payload)
         revision = stable_id('snapshot', [analysis_id, kind, raw])
