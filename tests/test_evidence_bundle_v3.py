@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -106,3 +107,20 @@ def test_read_source_missing_raises(tmp_path):
     aid = store.register(load_bundle(make_v3_bundle(tmp_path / 'in', version=2)))
     with pytest.raises(ValueError, match='入力ファイルが保存されていません: intensities.tsv'):
         store.read_source(aid, 'intensities.tsv')
+
+
+def test_shared_fixture_from_ms_data_parser_loads():
+    """ms-data-parser の見本の写しが読める（両リポが同じ見本を読むことで契約の食い違いを検出する）。"""
+    root = Path(__file__).parent / 'fixtures' / 'evidence_v3'
+    bundle = load_bundle(root / 'manifest.json')
+    assert bundle.manifest['contract_version'] == 3
+    assert bundle.manifest['intensities_stage'] in ('pre_imputation', 'post_imputation')
+
+    samples = parse_samples(
+        (root / role_path(bundle.manifest, 'samples')).read_text(encoding='utf-8-sig'))
+    ids = {f.feature_id for f in bundle.features}
+    matrix = parse_intensities(
+        (root / role_path(bundle.manifest, 'intensities')).read_text(encoding='utf-8-sig'),
+        ids, samples)
+    in_comparison = [s for s in samples if s.group in ('a', 'b')]
+    assert sum(len(row) for row in matrix.values()) == len(ids) * len(in_comparison)

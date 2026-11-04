@@ -1,0 +1,356 @@
+{
+ "selection_rule": "(1) report.md の表に行がある対象は、その行の元の results/novel_candidates.tsv（メトホルミンは results/claims_check.json の C4 の chosen）の spot_id を特徴 ID とし、バンドルの rt・log2fc が行の値と一致することを確かめる。(2) 行の無い本体・代謝物は、run の判断ログ 2026-10-11 の規則と同じく、理論イオンから ±5 ppm 以内で MS/MS のある特徴のうち、登録の InChIKey の先頭ブロックの注釈があればそれに絞り、mean_a + mean_b が最大のものを取る。無ければ「検出されていない」として skipped に書く。(3) spec §8 により、ST002901 の陰イオンの 2 件は expect に入れず skipped に書いて水準の記録だけにする。",
+ "decoy_rule": "おとりは A・B が 0。C の上限は極性ごとに 20 件（走査を回す前に決めた。spec §8 の「少数」を、手順書がレポートで印を付ける上位の件数 20 に読んだ）。",
+ "runs": [
+  {
+   "accession": "ST003841",
+   "polarity": "positive",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST003841\\xenobiotic_calibration\\pos\\bundle",
+   "test_group": "VilCre_Met",
+   "ppm": 10.0,
+   "entries": [
+    {
+     "entry_id": "X1",
+     "role": "drug",
+     "name": "metformin",
+     "formula": "C4H11N5",
+     "inchikey": "XZWYZXLIPXDOLR-UHFFFAOYSA-N",
+     "received_by": "test"
+    }
+   ],
+   "expect": [
+    {
+     "feature_id": "4338",
+     "label": "metformin",
+     "min_level": "A",
+     "basis": "report.md 1 節 C4 / claims_check.json: MassSpecGymID0040681 spot 4338、[M+H]+ -3.24 ppm、RT 8.313 分、log2FC 6.58、バンドルの m/z 130.1083"
+    },
+    {
+     "feature_id": "3382",
+     "label": "1-Methylbiguanide",
+     "min_level": "C",
+     "basis": "report.md 2 節 / novel_candidates.tsv: 1-Methylbiguanide spot 3382、[M+H]1+ -1.63 ppm、RT 9.459 分、log2FC 7.68、バンドルの m/z 116.0929"
+    },
+    {
+     "feature_id": "5427",
+     "label": "N-Isopropylimidodicarbonimidic diamide",
+     "min_level": "C",
+     "basis": "report.md 2 節 / novel_candidates.tsv: N-Isopropylimidodicarbonimidic diamide spot 5427、[M+H]1+ -2.19 ppm、RT 7.439 分、log2FC 21.17、バンドルの m/z 144.1241"
+    },
+    {
+     "feature_id": "3156",
+     "label": "N-Cyano-N',N'-dimethylguanidine",
+     "min_level": "C",
+     "basis": "report.md 2 節 / novel_candidates.tsv: N-Cyano-N',N'-dimethylguanidine spot 3156、[M+H]1+ -2.80 ppm、RT 8.335 分、log2FC 9.39、バンドルの m/z 113.0819"
+    },
+    {
+     "feature_id": "6126",
+     "label": "6-Propyl-1,3,5-triazine-2,4-diamine",
+     "min_level": "C",
+     "basis": "report.md 2 節 / novel_candidates.tsv: 6-Propyl-1,3,5-triazine-2,4-diamine spot 6126、[M+H]1+ -3.27 ppm、RT 8.519 分、log2FC 15.61、バンドルの m/z 154.1082"
+    }
+   ],
+   "skipped": []
+  },
+  {
+   "accession": "ST002901",
+   "polarity": "positive",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST002901\\xenobiotic_calibration\\pos\\bundle",
+   "test_group": "CSIS_Flx",
+   "ppm": 10.0,
+   "entries": [
+    {
+     "entry_id": "X1",
+     "role": "drug",
+     "name": "fluoxetine",
+     "formula": "C17H18F3NO",
+     "inchikey": "RTHCYVBBDHJXIQ-UHFFFAOYSA-N",
+     "received_by": "test"
+    },
+    {
+     "entry_id": "X2",
+     "role": "drug_metabolite",
+     "name": "norfluoxetine",
+     "formula": "C16H16F3NO",
+     "inchikey": "WIQRCHMSJFFONW-UHFFFAOYSA-N",
+     "parent_entry_id": "X1",
+     "received_by": "test"
+    },
+    {
+     "entry_id": "X3",
+     "role": "anesthetic",
+     "name": "ketamine",
+     "formula": "C13H16ClNO",
+     "inchikey": "YQEZLKZALYSWHR-UHFFFAOYSA-N",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X4",
+     "role": "drug_metabolite",
+     "name": "norketamine",
+     "formula": "C12H14ClNO",
+     "inchikey": "BEQZHFIKTBVCAU-UHFFFAOYSA-N",
+     "parent_entry_id": "X3",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X5",
+     "role": "drug_metabolite",
+     "name": "hydroxynorketamine",
+     "formula": "C12H14ClNO2",
+     "parent_entry_id": "X3",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X6",
+     "role": "drug_metabolite",
+     "name": "dehydronorketamine",
+     "formula": "C12H12ClNO",
+     "parent_entry_id": "X3",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X7",
+     "role": "anesthetic",
+     "name": "xylazine",
+     "formula": "C12H16N2S",
+     "received_by": "both"
+    }
+   ],
+   "expect": [
+    {
+     "feature_id": "13981",
+     "label": "fluoxetine",
+     "min_level": "A",
+     "basis": "規則 (2): 候補 1 件のうち mean_a+mean_b 最大。spot 13981、[M+H]+ -3.64 ppm、RT 4.108 分、m/z 310.1402、注釈の InChIKey なし（質量と MS/MS の有無だけで選んだ）"
+    },
+    {
+     "feature_id": "13249",
+     "label": "norfluoxetine",
+     "min_level": "B",
+     "basis": "規則 (2): 候補 5 件のうち mean_a+mean_b 最大。spot 13249、[M+H]+ -2.07 ppm、RT 5.102 分、m/z 296.1251、注釈の InChIKey なし（質量と MS/MS の有無だけで選んだ）"
+    },
+    {
+     "feature_id": "10218",
+     "label": "ketamine",
+     "min_level": "A",
+     "basis": "規則 (2): 候補 27 件のうち mean_a+mean_b 最大。spot 10218、[M+H]+ -1.79 ppm、RT 3.160 分、m/z 238.0989、注釈の InChIKey あり"
+    },
+    {
+     "feature_id": "9382",
+     "label": "norketamine",
+     "min_level": "B",
+     "basis": "report.md 2 節 / novel_candidates.tsv: (.+/-.)-Norketamine spot 9382、[M+H]1+ -2.09 ppm、RT 2.106 分、log2FC -0.86、バンドルの m/z 224.0832"
+    },
+    {
+     "feature_id": "10299",
+     "label": "hydroxynorketamine",
+     "min_level": "B",
+     "basis": "report.md 2 節 / novel_candidates.tsv: (2R,6R)-Hydroxynorketamine spot 10299、[M+H]1+ -2.47 ppm、RT 6.654 分、log2FC -3.53、バンドルの m/z 240.0780"
+    },
+    {
+     "feature_id": "8283",
+     "label": "dehydronorketamine",
+     "min_level": "B",
+     "basis": "report.md 2 節 / novel_candidates.tsv: Dehydronorketamine spot 8283、[M+H-NH3]1+ -2.44 ppm、RT 6.633 分、log2FC -3.78、バンドルの m/z 205.0410"
+    },
+    {
+     "feature_id": "9187",
+     "label": "2-Ethyl-2-(p-tolyl)malonamide",
+     "min_level": "C",
+     "basis": "report.md 2 節 / novel_candidates.tsv: 2-Ethyl-2-(p-tolyl)malonamide spot 9187、[M+H]1+ -2.60 ppm、RT 6.733 分、log2FC 13.62、バンドルの m/z 221.1279"
+    }
+   ],
+   "skipped": []
+  },
+  {
+   "accession": "ST002901",
+   "polarity": "negative",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST002901\\xenobiotic_calibration\\neg\\bundle",
+   "test_group": "CSIS_Flx",
+   "ppm": 10.0,
+   "entries": [
+    {
+     "entry_id": "X1",
+     "role": "drug",
+     "name": "fluoxetine",
+     "formula": "C17H18F3NO",
+     "inchikey": "RTHCYVBBDHJXIQ-UHFFFAOYSA-N",
+     "received_by": "test"
+    },
+    {
+     "entry_id": "X2",
+     "role": "drug_metabolite",
+     "name": "norfluoxetine",
+     "formula": "C16H16F3NO",
+     "inchikey": "WIQRCHMSJFFONW-UHFFFAOYSA-N",
+     "parent_entry_id": "X1",
+     "received_by": "test"
+    },
+    {
+     "entry_id": "X3",
+     "role": "anesthetic",
+     "name": "ketamine",
+     "formula": "C13H16ClNO",
+     "inchikey": "YQEZLKZALYSWHR-UHFFFAOYSA-N",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X4",
+     "role": "drug_metabolite",
+     "name": "norketamine",
+     "formula": "C12H14ClNO",
+     "inchikey": "BEQZHFIKTBVCAU-UHFFFAOYSA-N",
+     "parent_entry_id": "X3",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X5",
+     "role": "drug_metabolite",
+     "name": "hydroxynorketamine",
+     "formula": "C12H14ClNO2",
+     "parent_entry_id": "X3",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X6",
+     "role": "drug_metabolite",
+     "name": "dehydronorketamine",
+     "formula": "C12H12ClNO",
+     "parent_entry_id": "X3",
+     "received_by": "both"
+    },
+    {
+     "entry_id": "X7",
+     "role": "anesthetic",
+     "name": "xylazine",
+     "formula": "C12H16N2S",
+     "received_by": "both"
+    }
+   ],
+   "expect": [],
+   "skipped": [
+    {
+     "feature_id": "15150",
+     "label": "Autophinib",
+     "basis": "report.md 2 節 / novel_candidates.tsv: Autophinib spot 15150、[M-H]1- 1.07 ppm、RT 1.089 分、log2FC 17.05、バンドルの m/z 345.0512",
+     "reason": "spec §8: 索引のフルオキセチンは陽イオンのレコードだけで、陰イオンでは MS/MS の共有の筋が 使えないので合格の条件から外す。水準の記録だけにする"
+    },
+    {
+     "feature_id": "15750",
+     "label": "4-Bromo-2-{[(1-propyl-1H-benzimidazol-2-yl)amino]methyl}phenol",
+     "basis": "report.md 2 節 / novel_candidates.tsv: 4-Bromo-2-{[(1-propyl-1H-benzimidazol-2-yl)amino]methyl}phenol spot 15750、[M-H]1- -3.84 ppm、RT 1.306 分、log2FC 14.78、バンドルの m/z 358.0546",
+     "reason": "spec §8: 索引のフルオキセチンは陽イオンのレコードだけで、陰イオンでは MS/MS の共有の筋が 使えないので合格の条件から外す。水準の記録だけにする"
+    },
+    {
+     "label": "fluoxetine",
+     "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
+    },
+    {
+     "label": "norfluoxetine",
+     "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
+    },
+    {
+     "label": "ketamine",
+     "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
+    },
+    {
+     "label": "norketamine",
+     "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
+    },
+    {
+     "label": "hydroxynorketamine",
+     "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
+    },
+    {
+     "label": "dehydronorketamine",
+     "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
+    }
+   ]
+  },
+  {
+   "accession": "MTBLS9365",
+   "polarity": "positive",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\MTBLS9365\\xenobiotic_calibration\\pos\\bundle",
+   "test_group": "methionine_choline_deficient_MCD",
+   "ppm": 10.0,
+   "ppm_bands": [
+    {
+     "min_mz": null,
+     "max_mz": 200.0,
+     "ppm": 10.0
+    },
+    {
+     "min_mz": 200.0,
+     "max_mz": null,
+     "ppm": 5.0
+    }
+   ],
+   "entries": [
+    {
+     "entry_id": "X1",
+     "role": "drug",
+     "name": "amlodipine",
+     "formula": "C20H25ClN2O5",
+     "inchikey": "HTIQEAQVCYTUBX-UHFFFAOYSA-N",
+     "received_by": "test"
+    },
+    {
+     "entry_id": "X2",
+     "role": "drug",
+     "name": "fluoxetine",
+     "formula": "C17H18F3NO",
+     "inchikey": "RTHCYVBBDHJXIQ-UHFFFAOYSA-N",
+     "received_by": "test"
+    }
+   ],
+   "expect": [],
+   "skipped": [],
+   "max_A": 0,
+   "max_B": 0,
+   "max_C": 20
+  },
+  {
+   "accession": "MTBLS9365",
+   "polarity": "negative",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\MTBLS9365\\xenobiotic_calibration\\neg\\bundle",
+   "test_group": "methionine_choline_deficient_MCD",
+   "ppm": 10.0,
+   "ppm_bands": [
+    {
+     "min_mz": null,
+     "max_mz": 200.0,
+     "ppm": 10.0
+    },
+    {
+     "min_mz": 200.0,
+     "max_mz": null,
+     "ppm": 5.0
+    }
+   ],
+   "entries": [
+    {
+     "entry_id": "X1",
+     "role": "drug",
+     "name": "amlodipine",
+     "formula": "C20H25ClN2O5",
+     "inchikey": "HTIQEAQVCYTUBX-UHFFFAOYSA-N",
+     "received_by": "test"
+    },
+    {
+     "entry_id": "X2",
+     "role": "drug",
+     "name": "fluoxetine",
+     "formula": "C17H18F3NO",
+     "inchikey": "RTHCYVBBDHJXIQ-UHFFFAOYSA-N",
+     "received_by": "test"
+    }
+   ],
+   "expect": [],
+   "skipped": [],
+   "max_A": 0,
+   "max_B": 0,
+   "max_C": 20
+  }
+ ]
+}
