@@ -35,7 +35,7 @@ from massbank_context.xenobiotic.pattern import (
     SampleSides, detection_counts, group_bias, parent_linked, parent_rho, sample_sides)
 from massbank_context.xenobiotic.registry import XenobioticError, XenoEntry, load_registration
 from massbank_context.xenobiotic.tables import (
-    ADDUCT_TABLE_VERSION, SHIFT_TABLE_VERSION, THRESHOLDS, THRESHOLDS_VERSION)
+    ADDUCT_TABLE_VERSION, CALIBRATION, SHIFT_TABLE_VERSION, THRESHOLDS, THRESHOLDS_VERSION)
 
 __all__ = ["SCREEN_COLUMNS", "LEVELS", "PairEvidence", "assign_level", "resolve_polarity",
            "resolve_test_side", "run_screen", "get_screen_rows"]
@@ -347,10 +347,11 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
     return rows
 
 
-def _summarize(features: Sequence[Feature], entries: Sequence[XenoEntry],
+def _summarize(bundle: EvidenceBundle, entries: Sequence[XenoEntry],
                pairs: dict[str, list[_Pair]], spectra: dict[str, list[QuerySpectrum]],
-               msms: _MsmsStrand, pattern: _PatternStrand, manifest: dict,
+               msms: _MsmsStrand, pattern: _PatternStrand,
                mass_counts: Counter, n_rows: int) -> dict:
+    features, manifest = bundle.features, bundle.manifest
     levels = dict.fromkeys((*LEVELS, 'none'), 0)
     significant = dict(levels)
     per_entry = {e.entry_id: {'A': 0, 'B': 0} for e in entries}
@@ -364,12 +365,17 @@ def _summarize(features: Sequence[Feature], entries: Sequence[XenoEntry],
                 per_entry[pair.entry.entry_id][pair.level] += 1
     states = Counter(_msms_state(f.feature_id, spectra) for f in features)
     return {
+        'calibration': dict(CALIBRATION),
+        'intensities_stage': manifest.get('intensities_stage'),
         'n_features': len(features),
         'levels': levels,
         'significant_levels': significant,
         'per_entry': per_entry,
         'unavailable': {
             'msms': msms.unavailable,
+            # links が空なら A・B は原理的に 0。「薬剤由来なし」に読ませない。
+            'msms_all': None if bundle.spectrum_links else 'no_spectrum_links',
+            'spectrum_links_status': manifest.get('provenance', {}).get('spectrum_links_status'),
             'n_features_without_msms': states['no_msms'] + states['empty_spectrum'],
             'pattern': pattern.reason,
             'detection_unavailable_reason': manifest['population'].get('detection_unavailable_reason'),
@@ -438,6 +444,7 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
     relations, mass_counts, dropped = find_mass_relations(features, entries, polarity, ppm, bands,
                                                           max_shifts)
     conn, meta = open_index()
+    index = {'bin_width': meta['bin_width'], 'built_at': meta.get('built_at')}
     try:
         msms = _msms_strand(conn, meta, entries, polarity, spectra, relations)
     finally:
@@ -445,8 +452,7 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
     pattern = _pattern_strand(store, analysis_id, bundle, test_side)
     pairs = _judge_pairs(features, entries, relations, msms, pattern)
     rows = _build_rows(features, pairs, spectra, msms, pattern, dropped)
-    summary = _summarize(features, entries, pairs, spectra, msms, pattern, bundle.manifest,
-                         mass_counts, len(rows))
+    summary = _summarize(bundle, entries, pairs, spectra, msms, pattern, mass_counts, len(rows))
 
     if output_path is None:
         # analysis_id の ':' は Windows のファイル名に使えない
@@ -461,21 +467,30 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
     params = {'test_group': test_group, 'ppm': ppm, 'ppm_bands': bands, 'polarity': polarity,
               'max_shifts': max_shifts}
     payload = {'params': params, 'versions': versions, 'thresholds': dict(THRESHOLDS),
-               'registration_id': registration_id, 'summary': summary, 'columns': SCREEN_COLUMNS,
+               'registration_id': registration_id, 'index': index, 'summary': summary,
+               'columns': SCREEN_COLUMNS,
                'rows': rows, 'output_path': str(target), 'output_sha256': sha256}
     revision = _publish(store, analysis_id, payload, target, data, base_revision)
     return {'screen_revision': revision, 'registration_id': registration_id, 'polarity': polarity,
             'test_group': test_group, 'versions': versions, 'thresholds': dict(THRESHOLDS),
-            'params': params, **summary, 'output_path': str(target), 'output_sha256': sha256,
+            'index': index, 'params': params, **summary, 'output_path': str(target), 'output_sha256': sha256,
             'next_tools': ['get_xenobiotic_screen']}
 
 
-def _encode_cursor(revision: str, offset: int) -> str:
-    raw = canonical_json({'rev': revision, 'offset': offset}).encode()
+def _cursor_scope(revision: str, feature_ids: list[str] | None, level: str | None) -> dict:
+    """カーソルが結び付く版と絞り込みの条件。特徴の指定は順に依らない。"""
+    digest = None
+    if feature_ids is not None:
+        digest = hashlib.sha256(canonical_json(sorted(set(feature_ids))).encode()).hexdigest()
+    return {'rev': revision, 'level': level, 'feature_ids': digest}
+
+
+def _encode_cursor(scope: dict, offset: int) -> str:
+    raw = canonical_json({**scope, 'offset': offset}).encode()
     return base64.urlsafe_b64encode(raw).decode()
 
 
-def _cursor_offset(cursor: str, revision: str) -> int:
+def _cursor_offset(cursor: str, scope: dict) -> int:
     try:
         value = json.loads(base64.urlsafe_b64decode(cursor.encode()))
     except (ValueError, TypeError, UnicodeError, binascii.Error) as exc:
@@ -485,14 +500,17 @@ def _cursor_offset(cursor: str, revision: str) -> int:
     offset = value.get('offset')
     if type(offset) is not int or offset < 0:
         raise ValueError('invalid_cursor')
-    if value['rev'] != revision:
-        raise ValueError('stale_cursor: 走査がやり直されました')
+    if any(value.get(key) != expected for key, expected in scope.items()):
+        raise ValueError('stale_cursor: 走査か絞り込みの条件が変わりました')
     return offset
 
 
 def get_screen_rows(store: EvidenceStore, analysis_id: str, *, feature_ids: list[str] | None = None,
                     level: str | None = None, cursor: str | None = None, limit: int = 50) -> dict:
-    """最新の走査の行を引く。カーソルは走査の版に結び付くので、新旧の行は混ざらない。"""
+    """最新の走査の行を引く。カーソルは走査の版と絞り込みに結び付くので、別の行は混ざらない。
+
+    走査の後に登録し直していたら止めずに ``stale_registration`` で知らせる。
+    """
     if type(limit) is not int or not 1 <= limit <= MAX_ROWS_LIMIT:
         raise XenobioticError(f"limit は 1〜{MAX_ROWS_LIMIT} の整数: {limit!r}")
     if level is not None and level not in LEVELS:
@@ -500,8 +518,11 @@ def get_screen_rows(store: EvidenceStore, analysis_id: str, *, feature_ids: list
     revision = store.head_revision(analysis_id, SNAPSHOT_KIND)
     if revision is None:
         raise XenobioticError('走査の結果がありません。先に走査してください', code='missing_state')
-    rows = store.get_snapshot(analysis_id, revision)['rows']
-    offset = _cursor_offset(cursor, revision) if cursor is not None else 0
+    snapshot = store.get_snapshot(analysis_id, revision)
+    rows = snapshot['rows']
+    scope = _cursor_scope(revision, feature_ids, level)
+    offset = _cursor_offset(cursor, scope) if cursor is not None else 0
+    _, current_registration = load_registration(store, analysis_id)
 
     known = {row[_FEATURE_ID] for row in rows}
     unknown = [fid for fid in feature_ids or [] if fid not in known]
@@ -510,7 +531,9 @@ def get_screen_rows(store: EvidenceStore, analysis_id: str, *, feature_ids: list
                if (wanted is None or row[_FEATURE_ID] in wanted)
                and (level is None or row[_LEVEL] == level)]
     end = offset + limit
-    return {'screen_revision': revision, 'n_matched': len(matched),
+    return {'screen_revision': revision, 'registration_id': snapshot['registration_id'],
+            'stale_registration': snapshot['registration_id'] != current_registration,
+            'n_matched': len(matched),
             'rows': as_tsv(SCREEN_COLUMNS, matched[offset:end]),
-            'next_cursor': _encode_cursor(revision, end) if end < len(matched) else None,
+            'next_cursor': _encode_cursor(scope, end) if end < len(matched) else None,
             'unknown_feature_ids': unknown}

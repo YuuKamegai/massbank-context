@@ -24,6 +24,8 @@ import shutil
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # ms-data-parser の下に .pyc を書かない
+
 MS_DATA_PARSER = Path(r'C:\Users\yuu18\Metabolomix_with_LLM')
 sys.path.insert(0, str(MS_DATA_PARSER))
 

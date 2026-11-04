@@ -20,6 +20,7 @@ __all__ = [
     "SHIFT_TABLE_VERSION",
     "THRESHOLDS_VERSION",
     "THRESHOLDS",
+    "CALIBRATION",
     "Adduct",
     "ADDUCTS",
     "SOURCE_LOSSES",
@@ -34,13 +35,19 @@ ADDUCT_TABLE_VERSION = "xeno-adducts-2"
 SHIFT_TABLE_VERSION = "xeno-shifts-1"
 THRESHOLDS_VERSION = "xeno-thresholds-2026-11-05"
 
-# 実データで較正した値（spec §10）。陽性の期待を最も多く満たし、おとりで A・B が 0 の範囲で最も厳しい値。
+# 実データの較正で決めた値（選び方は spec §10.4）。陽性の期待を全部満たす値は無く、spec §8 の合格の条件は満たしていない。
 THRESHOLDS = {
     "msms_shared_min": 0.15,
     "msms_top_n": 10,
     "bias_reference_max": 1,
     "rho_min": 0.6,
     "rho_min_n": 5,
+}
+
+# 較正の合否。走査の要約に載せ、結果を読む人に不合格が見えるようにする。
+CALIBRATION = {
+    "status": "spec8_not_met",
+    "record": "docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md §10",
 }
 
 # 理論 m/z がこの幅（Da）未満で一致する形は 1 つに畳む

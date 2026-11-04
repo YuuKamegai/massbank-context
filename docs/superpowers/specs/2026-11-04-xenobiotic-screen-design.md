@@ -119,8 +119,9 @@ v3 の読み込みでは `contract_version` 2 と 3 を受け、2 には `sample
 
 - **群の偏り**: `received_by` が `test` の分子に関係する特徴は、検出（`detected` が真）の例数が test 群で多く reference 群で
   ほぼ無い形か。既定は「test で過半数、reference で 1 例以下」。`both` の分子は群の偏りを見ない（二次的な交絡の扱い。§5）。
-- **親との連動**: 代謝物の一致（質量の筋が質量差つき）で、親の entry に水準 A の特徴があるとき、test 群の試料の中で親の
-  特徴の値との Spearman の ρ。既定は n ≥ 5 で ρ ≥ 0.6 を連動とする。
+- **親との連動**: 代謝物の一致で、親の entry に水準 A の特徴があるとき、test 群の試料の中で親の
+  特徴の値との Spearman の ρ。既定は n ≥ 5 で ρ ≥ 0.6 を連動とする。代謝物の一致とは、`parent_entry_id` のある entry の一致（質量差の有無を問わない。
+  登録済みの代謝物そのものも代謝物の一致である）と、`parent_entry_id` の無い entry の質量差つきの一致（親はその entry 自身）を指す。
 
 ## 5. 水準
 
@@ -152,13 +153,16 @@ A が減り、親の水準 A の特徴を使う連動も同じ分だけ減る。
 - `polarity` は v3 では manifest から読み、引数と食い違えば誤りで止める。
 
 - 戻り値は要約だけ: 水準ごとの特徴の数、有意な特徴（バンドルの `significant`）のうち水準ごとの数、entry ごとの水準 A・B の数、
-  筋ごとの `unavailable` の理由、質量差の表と閾値の版。
+  筋ごとの `unavailable` の理由、質量差の表と閾値の版、索引の識別（`index` の `bin_width`・`built_at`）、`intensities_stage`、較正の合否（`calibration`）。
+  バンドルの `spectrum_links` が空なら `unavailable.msms_all` を `no_spectrum_links` にし、manifest の `provenance.spectrum_links_status` を
+  `unavailable.spectrum_links_status` に載せる（A・B が 0 を「薬剤由来なし」に読ませない）。
 - 全行は TSV で `output_path`（省略時は成果物の置き場所）に書く。列:
   `feature_id, mz, rt, log2fc, q_value, significant, level, entry_id, role, relation, theoretical_mz, ppm,
   msms_shared_score, msms_shared_n, msms_shared_formulas, forward_rank, detected_test, detected_reference, rho_parent, notes`。
   1 つの特徴に複数の entry の一致があれば行を分ける。
 - 大きい表は戻り値に載せない（呼び出し側の文脈を膨らませないため。v8 のレビューで `pathway_plot` の戻り値が文脈を圧迫した）。
-- 必要なら、行を引く `get_xenobiotic_screen(analysis_id, feature_ids=None, level=None, cursor=None, limit=50)`。
+- 必要なら、行を引く `get_xenobiotic_screen(analysis_id, feature_ids=None, level=None, cursor=None, limit=50)`。カーソルは走査の版と絞り込みの条件に結び付き、
+  違えば `stale_cursor`。戻りの `registration_id` は走査に使った登録で、今の登録と違えば `stale_registration` が真（止めない）。
 
 ## 7. 作りの決まり
 
@@ -332,13 +336,14 @@ ST002901 の陰イオンに本体・既知の代謝物の特徴は無い（理�
 | ST002901 pos 9187 2-Ethyl-2-(p-tolyl)malonamide | C | なし | 質量の一致が無い。共有はノルフルオキセチンに 0.05 で、芳香族の一般の断片（C6H7+・C6H7O+・C8H9+）だけ。検出 1/8 例で群の偏りも成り立たない。格子のどの点でも C に届かない |
 
 質量の表は広げていない。期待の JSON は走査の前の版のまま（`min_level` も特徴の割り当ても変えていない）。`tests/test_xenobiotic_calibration.py` の `KNOWN_UNMET` がこの 3 件を固定し、
-増えても減ってもテストが落ちる。
+増えても減ってもテストが落ちる。**realdata のテストの通過は §8 の合格ではない**（未達を固定して通しているだけ）。
 
 ### 10.8 実装で決めたこと
 
 計画の「設計との食い違い・設計の補足」:
 
 - **artifacts の仕組み**（§3.1）: 既存の `EvidenceStore`（`artifacts/evidence.sqlite` の `snapshots` / `heads`）。登録は種別 `xenobiotics`、走査は種別 `xenobiotic_screen` のスナップショット。解析の根拠版が変わるので `get_comparison_evidence` の古いカーソルは `stale_cursor` になる。
+  根拠版は全種別の `heads` から作るので、版を引用した主張も古くなる: 登録か走査の前の `evidence_revision` を持つ主張は、`validate_comparison_claims` で `evidence_revision_mismatch` になる。登録か走査の後は、根拠を引き直して版を取り直す。
 - **v3 の試料の値の置き場所**: `EvidenceBundle` に足さず、ストアの `sources` 表の複製から読み直す（`EvidenceStore.read_source`）。`Feature` には任意の `adduct` を足した。
 - **`intensities_stage` の位置**: manifest の最上位キー。ms-data-parser の見本も同じ。
 - **v3 の厳しさ**: `samples` と `intensities` は両方そろえるか両方省く。v2 に書けば誤り。`group` の数は `n_a` / `n_b` と一致し、`intensities` は全特徴 × `group` が a/b の全試料をちょうど 1 回ずつ持つ。
@@ -371,4 +376,6 @@ ST002901 の陰イオンに本体・既知の代謝物の特徴は無い（理�
   処理群だけの未知の特徴を TSV で探すのは §1 の目的に要るため（当初の「`detected_*` も空にする」は計画の字義で、spec を優先した）。`detection_unknown` のときは空のまま。
 - R14: 水準 A に `band` が `PASS` の条件を足した（§5 の改訂）。
 - R15: 付加体の矛盾は損失を除いた付加体同士で比べる（§4.1）。組ごとに落とした数を `notes` に出す。水準の無い特徴の行には entry を問わず合計を出す。別の entry の行だけがある特徴では、行の無い entry の分は行に出ず、要約の `counts` にだけ入る。
-- R16: 損失は組成に足りるときだけ作る（§4.1）。付加体の表の版は `xeno-adducts-2`。
+- R16: 損失は組成に足りるときだけ作る（§4.1）。付加体の表の版は `xeno-adducts-2`。`[M+HCOO-H2O]-` のように付加体が持ち込む原子も足りる側に数える。
+- R17: 閾値の選び方を改めた（§10.4）。
+- R18: M3・M4・M5 と Task 1〜6・8 の繰り越しは直さない。

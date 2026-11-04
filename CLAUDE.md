@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Phase A〜D（`experiment/` `kg/` `stats/` `report/`、ツール 4 本）まで。
 設計は [docs/superpowers/specs/2026-08-31-pathway-activity-design.md](docs/superpowers/specs/2026-08-31-pathway-activity-design.md)。
 外来の分子（薬物・代謝物など）の走査（`xenobiotic/`、ツール 3 本）も入っている。
+spec §8 の較正は不合格で手順書には入れていない（設計書 §10）。
 設計は [docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md](docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md)。
 `bias/` `catalog/` と spec §7.2 のツール 10 本のうち残りは未実装。
 

@@ -71,7 +71,8 @@ def validate_entries(entries: list[dict]) -> list[XenoEntry]:
         role = _text(raw, "role", required=True)
         if role not in ROLES:
             raise XenobioticError(f"role は {ROLES} のいずれか: {role!r}")
-        received_by = _text(raw, "received_by") or "test"
+        name = _text(raw, "name", required=True)
+        received_by = _text(raw, "received_by", required=True)
         if received_by not in RECEIVED_BY:
             raise XenobioticError(f"received_by は {RECEIVED_BY} のいずれか: {received_by!r}")
         inchikey = _text(raw, "inchikey")
@@ -83,7 +84,7 @@ def validate_entries(entries: list[dict]) -> list[XenoEntry]:
         except FormulaError as exc:
             raise XenobioticError(f"組成式が不正（{entry_id}）: {exc}") from exc
         result.append(XenoEntry(
-            entry_id=entry_id, role=role, name=_text(raw, "name") or "", inchikey=inchikey,
+            entry_id=entry_id, role=role, name=name, inchikey=inchikey,
             formula=hill_formula(composition), composition=composition,
             monoisotopic_mass=monoisotopic_mass(composition),
             parent_entry_id=_text(raw, "parent_entry_id"), received_by=received_by))

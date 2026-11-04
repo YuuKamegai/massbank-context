@@ -3,17 +3,23 @@
 走査を回す前に、report.md の表の行とバンドルの値だけから特徴 ID を決める。規則は
 ``SELECTION_RULE`` に書き、JSON にも写す。結果を見て変えない。
 
-使い方: `C:/Python314/python.exe scripts/build_xenobiotic_calibration_expectations.py`
+期待は結果を見て変えないので、`OUTPUT` が既にあれば `--force` なしでは止める。
+
+使い方: `C:/Python314/python.exe scripts/build_xenobiotic_calibration_expectations.py [--force]`
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 
-from massbank_context.core.formula import ELECTRON_MASS, monoisotopic_mass, parse_formula
-
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+from massbank_context.core.formula import ELECTRON_MASS, monoisotopic_mass, parse_formula  # noqa: E402
+
 OUTPUT = REPO / 'tests' / 'fixtures' / 'xenobiotic' / 'calibration_expectations.json'
 DATASETS = Path(r'C:\Users\yuu18\datasets\reanalysis')
 STUDY = Path(r'C:\Users\yuu18\reanalysis-study\runs')
@@ -204,6 +210,11 @@ def mtbls9365() -> list[dict]:
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--force', action='store_true', help='既にある期待を書き直す')
+    args = parser.parse_args()
+    if OUTPUT.exists() and not args.force:
+        raise SystemExit(f'{OUTPUT} が既にあります。書き直すなら --force')
     data = {'selection_rule': SELECTION_RULE, 'decoy_rule': DECOY_RULE,
             'runs': [st003841(), *st002901(), *mtbls9365()]}
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

@@ -139,13 +139,37 @@ def test_summary_reports_entries_and_unavailable(screened):
     assert summary['significant_levels'] == summary['levels']
     assert summary['per_entry'] == {'X1': {'A': 1, 'B': 1}, 'X2': {'A': 0, 'B': 0}}
     assert summary['unavailable'] == {
-        'msms': {'X2': 'no_inchikey'}, 'n_features_without_msms': 4, 'pattern': None,
-        'detection_unavailable_reason': None}
+        'msms': {'X2': 'no_inchikey'}, 'msms_all': None, 'spectrum_links_status': None,
+        'n_features_without_msms': 4, 'pattern': None, 'detection_unavailable_reason': None}
     assert summary['counts']['no_mz'] == 1 and summary['counts']['adduct_conflict_dropped'] == 0
     assert summary['thresholds'] == THRESHOLDS
     assert summary['polarity'] == 'positive' and summary['test_group'] == 'Drug'
     assert summary['params']['ppm'] == 5 and summary['params']['max_shifts'] == 2
     assert summary['next_tools'] == ['get_xenobiotic_screen']
+
+
+def test_summary_carries_calibration_index_and_stage(screened):
+    summary, _ = screened
+    assert summary['calibration'] == {
+        'status': 'spec8_not_met',
+        'record': 'docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md §10'}
+    assert set(summary['versions']) == {'adduct_table', 'shift_table', 'thresholds'}
+    assert summary['index'] == {'bin_width': 0.0075, 'built_at': '2026-11-04T00:00:00Z'}
+    assert summary['intensities_stage'] == 'pre_imputation'
+
+
+def test_empty_spectrum_links_are_reported_as_unavailable(registered, monkeypatch):
+    # A・B が 0 なのを「薬剤由来なし」と読ませない
+    store, aid = registered
+
+    def no_links(bundle):
+        manifest = dict(bundle.manifest, provenance={'spectrum_links_status': 'not_provided'})
+        return replace(bundle, spectrum_links=(), manifest=manifest)
+
+    _alter_bundle(monkeypatch, store, no_links)
+    unavailable = run_screen(store, aid, test_group='Drug', ppm=5)['unavailable']
+    assert unavailable['msms_all'] == 'no_spectrum_links'
+    assert unavailable['spectrum_links_status'] == 'not_provided'
 
 
 def test_feature_without_mz_is_kept(screened):
@@ -255,7 +279,8 @@ def test_snapshot_keeps_rows_and_versions(registered):
     summary = run_screen(store, aid, test_group='Drug', ppm=5)
     payload = store.get_snapshot(aid, summary['screen_revision'])
     assert set(payload) == {'params', 'versions', 'thresholds', 'registration_id', 'summary',
-                            'columns', 'rows', 'output_path', 'output_sha256'}
+                            'columns', 'rows', 'output_path', 'output_sha256', 'index'}
+    assert payload['index'] == summary['index']
     assert payload['columns'] == SCREEN_COLUMNS and len(payload['rows']) == summary['n_rows']
     assert payload['versions'] == summary['versions']
 
@@ -269,6 +294,7 @@ def test_v2_without_polarity_requires_argument(analysis_v2):
 def test_v2_screen_marks_pattern_unavailable(analysis_v2):
     summary = run_screen(*analysis_v2, test_group='Drug', ppm=5, polarity='positive')
     assert summary['unavailable']['pattern'] == 'no_intensities'
+    assert summary['intensities_stage'] is None
     assert summary['levels']['C'] == 0
     rows = _read_tsv(summary['output_path'])
     assert all('pattern_unavailable:no_intensities' in r['notes'] for r in rows)
@@ -588,6 +614,37 @@ def test_cursor_is_stale_after_rescreen(screened_store):
     run_screen(store, aid, test_group='Drug', ppm=10)
     with pytest.raises(ValueError, match='^stale_cursor'):
         get_screen_rows(store, aid, cursor=cursor)
+
+
+@pytest.mark.parametrize('first, second', [
+    (dict(), dict(level='A')),
+    (dict(level='D'), dict(level='C')),
+    (dict(feature_ids=['k_hnk', 'k_parent']), dict(feature_ids=['k_hnk'])),
+    (dict(feature_ids=['k_hnk', 'k_parent']), dict()),
+])
+def test_cursor_is_stale_when_filter_changes(screened_store, first, second):
+    store, aid = screened_store
+    cursor = get_screen_rows(store, aid, limit=1, **first)['next_cursor']
+    assert cursor
+    with pytest.raises(ValueError, match='^stale_cursor'):
+        get_screen_rows(store, aid, cursor=cursor, **second)
+
+
+def test_cursor_ignores_the_order_of_feature_ids(screened_store):
+    store, aid = screened_store
+    cursor = get_screen_rows(store, aid, feature_ids=['k_hnk', 'k_parent'], limit=1)['next_cursor']
+    assert get_screen_rows(store, aid, feature_ids=['k_parent', 'k_hnk'], cursor=cursor)['rows']
+
+
+def test_rows_report_the_registration_of_the_screen(screened_store):
+    store, aid = screened_store
+    page = get_screen_rows(store, aid)
+    registration_id = page['registration_id']
+    assert registration_id.startswith('xenobiotics:') and page['stale_registration'] is False
+    register(store, aid, [KET])
+    page = get_screen_rows(store, aid)  # 止めずに知らせる
+    assert page['registration_id'] == registration_id and page['stale_registration'] is True
+    assert page['n_matched'] > 0
 
 
 def test_cursor_is_stale_after_reregistration(screened_store):

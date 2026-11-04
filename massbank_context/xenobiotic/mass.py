@@ -41,10 +41,16 @@ class MassRelation:
         return f"{','.join(self.shifts) or 'parent'}|{self.ion}"
 
 
+_BAND_KEYS = {"min_mz", "max_mz", "ppm"}
+
+
 def validate_ppm_bands(ppm_bands: list[dict] | None) -> list[dict]:
     """ppm の帯（半開区間 [min_mz, max_mz)）を検証して min_mz 昇順で返す。誤りは ``ValueError``。"""
     bands: list[dict] = []
     for band in ppm_bands or []:
+        unknown = set(band) - _BAND_KEYS
+        if unknown:
+            raise ValueError(f"ppm_bands に未知のキー: {sorted(unknown)}（使えるのは {sorted(_BAND_KEYS)}）")
         ppm = band.get("ppm")
         lo, hi = band.get("min_mz"), band.get("max_mz")
         if not isinstance(ppm, (int, float)) or isinstance(ppm, bool) or not math.isfinite(ppm) or ppm <= 0:

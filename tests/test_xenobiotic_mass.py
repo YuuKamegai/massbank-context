@@ -150,6 +150,11 @@ def test_unrecognized_adduct_is_kept_and_counted_per_feature():
     assert counts['adduct_unrecognized'] == 1
 
 
+def test_ppm_bands_refuse_unknown_keys():
+    with pytest.raises(ValueError, match='未知のキー'):
+        validate_ppm_bands([{'min_mz': 200, 'max': 300, 'ppm': 5}])
+
+
 def test_ppm_bands_choose_by_theoretical_mz():
     bands = validate_ppm_bands([{'min_mz': None, 'max_mz': 200, 'ppm': 10}, {'min_mz': 200, 'max_mz': None, 'ppm': 5}])
     assert tolerance_ppm(150.0, 3.0, bands) == 10 and tolerance_ppm(200.0, 3.0, bands) == 5

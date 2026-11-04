@@ -44,6 +44,16 @@ def test_invalid_entries_raise(analysis, change):
         register(store, aid, [dict(KET, **change)])
 
 
+@pytest.mark.parametrize('key', ['received_by', 'name'])
+def test_required_fields_raise_when_missing(analysis, key):
+    store, aid = analysis
+    entry = {k: v for k, v in KET.items() if k != key}
+    with pytest.raises(XenobioticError, match=key):
+        register(store, aid, [entry])
+    with pytest.raises(XenobioticError, match=key):
+        register(store, aid, [dict(KET, **{key: '  '})])
+
+
 def test_duplicate_entry_id_and_empty_list_raise(analysis):
     store, aid = analysis
     for entries in ([KET, KET], []):
