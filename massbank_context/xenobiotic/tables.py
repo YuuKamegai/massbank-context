@@ -32,11 +32,11 @@ __all__ = [
 
 ADDUCT_TABLE_VERSION = "xeno-adducts-1"
 SHIFT_TABLE_VERSION = "xeno-shifts-1"
-THRESHOLDS_VERSION = "xeno-thresholds-provisional"
+THRESHOLDS_VERSION = "xeno-thresholds-2026-11-05"
 
-# 仮の閾値。Task 9 で決める。
+# 実データで較正した値（spec §10）。陽性の期待を最も多く満たし、おとりで A・B が 0 の範囲で最も厳しい値。
 THRESHOLDS = {
-    "msms_shared_min": 0.3,
+    "msms_shared_min": 0.15,
     "msms_top_n": 10,
     "bias_reference_max": 1,
     "rho_min": 0.6,

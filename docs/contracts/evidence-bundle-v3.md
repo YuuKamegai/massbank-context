@@ -34,5 +34,16 @@ massbank-context は 2 と 3 の両方を読む（v2 は samples / intensities �
 
 ## 見本
 
-見本のバンドルは ms-data-parser の `tests/fixtures/evidence_bundle_v3/` と共有する（写しは本リポジトリの
-tests に置く。Task 9）。両リポのテストが同じ見本を読むことで、契約の食い違いを検出する。
+見本のバンドルの原本は ms-data-parser の `tests/fixtures/evidence_bundle_v3/`（`tests/evidence_bundle_fixture.py` で
+作り直す）。本リポジトリの写しは `tests/fixtures/evidence_v3/` で、`tests/test_evidence_bundle_v3.py` の
+`test_shared_fixture_from_ms_data_parser_loads` が読む。両リポのテストが同じ見本を読むことで、契約の食い違いを検出する。
+manifest がファイルの sha256 を持つので、写しは改行を変換しない（`.gitattributes` の `-text`）。
+
+`intensities_stage` の位置は見本でも manifest の最上位で、この文書と一致する。
+
+## dataset 経路の spectrum_links
+
+ms-data-parser の `dataset_export_evidence_bundle` は v3 でも `spectrum_links` を空で書く
+（`provenance.spectrum_links_status` が `not_provided`）。v3 の契約としては正しいが、外来の分子の走査では MS/MS の筋が
+全部 `no_msms` になり、水準 A・B が付かない。較正では同じアラインメントの `.dcl` と ID で結んだ links を足した
+（`scripts/build_xenobiotic_calibration_bundles.py`、設計書 §10.2）。
