@@ -1,19 +1,22 @@
 """候補別にRDF取得結果と来歴を結び付ける。"""
-import sqlite3
-import hashlib
 from contextlib import closing
 from datetime import datetime, timezone
 from massbank_context.core import config
 from massbank_context.core.evidence_ids import stable_id, canonical_json
 from massbank_context.experiment.bundle import INCHIKEY_PATTERN
-from massbank_context.evidence.selection import candidate_dicts
-from massbank_context.evidence.matching import select_ids
+from massbank_context.evidence.selection import candidate_dicts, select_ids
 from massbank_context.evidence.catalog import read_candidate_catalog
+from massbank_context.index.writer import index_fingerprint, open_index_readonly, read_meta
 from massbank_context.kg.evidence_cache import EvidenceCache
 from massbank_context.kg.pathway import PubChemPathwayAdapter, build_pathway_query, UpstreamError
 
 QUERY_VERSION = 'pubchem-participant-v1'
 PARTICIPANT = 'http://purl.obolibrary.org/obo/RO_0000057'
+
+
+def supported_inchikey(inchikey) -> bool:
+    """PubChemへ照会できるfull InChIKeyか。旧形式・小文字等は照会しない。"""
+    return bool(inchikey) and INCHIKEY_PATTERN.fullmatch(inchikey) is not None
 
 
 class EvidenceAdapter(PubChemPathwayAdapter):
@@ -64,8 +67,7 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
     ids = select_ids(by_id, candidate_ids)
     adapter = adapter or EvidenceAdapter(config.PUBCHEM_SPARQL_ENDPOINT)
     cache = EvidenceCache(store.root / 'rdf-cache.sqlite')
-    keys = sorted({by_id[cid]['inchikey'] for cid in ids if by_id[cid]['inchikey']
-                   and INCHIKEY_PATTERN.fullmatch(by_id[cid]['inchikey'])})
+    keys = sorted({by_id[cid]['inchikey'] for cid in ids if supported_inchikey(by_id[cid]['inchikey'])})
     snapshots, pending = {}, []
     for ik in keys:
         cached = cache.lookup(adapter.endpoint, QUERY_VERSION, ik)
@@ -83,16 +85,18 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
             break
     # 違うendpointや消えた候補の現在結果を引き継がない。
     previous = state.get('lookups', {})
+    selected = set(ids)
     lookups = [x for x in previous.get('lookups', []) if x['candidate_id'] in by_id
-               and x['candidate_id'] not in ids and x.get('endpoint') == adapter.endpoint]
-    evidence = [x for x in previous.get('evidence', [])
-                if x['candidate_id'] in {l['candidate_id'] for l in lookups}]
+               and x['candidate_id'] not in selected and x.get('endpoint') == adapter.endpoint]
+    kept = {l['candidate_id'] for l in lookups}
+    evidence = [x for x in previous.get('evidence', []) if x['candidate_id'] in kept]
     for cid in ids:
         candidate = by_id[cid]
         ik = candidate['inchikey']
         snap = snapshots.get(ik, dict(inchikey=ik, endpoint=adapter.endpoint,
                                       query_version=QUERY_VERSION, fetched_at=None, hits=[],
-                                      status='not_queried' if ik else 'unsupported_identifier'))
+                                      status='not_queried' if supported_inchikey(ik)
+                                      else 'unsupported_identifier'))
         lookup_id = stable_id('lookup', [cid, canonical_json(snap)])
         lookup = dict(snap, candidate_id=cid, feature_id=candidate['feature_id'], lookup_id=lookup_id)
         lookups.append(lookup)
@@ -105,9 +109,8 @@ def resolve_candidates(store, analysis_id, candidate_ids, *, refresh=False, adap
     catalog = []
     catalog_provenance = {}
     if config.INDEX_PATH.is_file():
-        with config.INDEX_PATH.open('rb') as stream:
-            catalog_provenance['index_hash'] = hashlib.file_digest(stream, 'sha256').hexdigest()
-        with closing(sqlite3.connect(config.INDEX_PATH.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+        with closing(open_index_readonly(config.INDEX_PATH)) as conn:
+            catalog_provenance['index_fingerprint'] = index_fingerprint(config.INDEX_PATH, read_meta(conn))
             catalog_keys = sorted({c['inchikey'] for c in candidates if c['inchikey']})
             catalog = read_candidate_catalog(conn, accessions=[c['source_id'] for c in candidates
                                                               if c['source'] == 'massbank'], inchikeys=catalog_keys)

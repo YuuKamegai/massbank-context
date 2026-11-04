@@ -62,18 +62,19 @@ def test_explicit_unqueried_lookup_counts_as_unqueried(tmp_path):
 
 
 def test_large_feature_page_keeps_reachable_next_page(tmp_path):
-    import json
     from evidence_helpers import rewrite_table
     from massbank_context.evidence.store import EvidenceStore
     from massbank_context.experiment.bundle import load_bundle
-    from massbank_context.report.comparison import get_evidence
+    from massbank_context.core.evidence_ids import canonical_json
+    from massbank_context.report.comparison import get_evidence, tabulate
     path=make_bundle(tmp_path/'input')
     rewrite_table(path,'annotations',lambda rows:[r.update(name='x'*18000) for r in rows])
     store=EvidenceStore(tmp_path/'store')
     aid=store.register(load_bundle(path))
     page=get_evidence(store,aid,limit=8)
     assert len(page['features']) < 8
-    assert len(json.dumps(page,ensure_ascii=False).encode()) < 128*1024
+    # 上限は公開形（TSV）で測る。
+    assert len(canonical_json(tabulate(page)).encode()) < 128*1024
     ids={f['feature_id'] for f in page['features']}
     while page['next_cursor']:
         page=get_evidence(store,aid,limit=8,cursor=page['next_cursor'])

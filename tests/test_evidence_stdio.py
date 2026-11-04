@@ -19,7 +19,7 @@ def test_stdio_restart_keeps_analysis(tmp_path):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()
-                assert len(tools.tools) == 14
+                assert len(tools.tools) == 15
                 if aid is None:
                     result = await session.call_tool('load_evidence_bundle', {'path': str(path)})
                 else:

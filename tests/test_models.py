@@ -102,3 +102,22 @@ def test_as_tsv_header_emitted_once():
     assert lines[1] == "mz1\tint1"
     assert lines[2] == "mz2\t"
     assert lines[3] == "mz3\tint3"
+
+
+def test_as_tsv_escapes_tab_and_newline():
+    """値中のタブ・改行で列や行がずれない。"""
+    result = as_tsv(["name", "n"], [["a\tb\nc\\d", 1]])
+    lines = result.split("\n")
+    assert len(lines) == 2
+    assert lines[1].split("\t") == ["a\\tb\\nc\\\\d", "1"]
+
+
+def test_rows_tsv_unions_columns_and_serializes_nested():
+    from massbank_context.core.serialization import rows_tsv
+    result = rows_tsv([{"a": 1, "b": {"x": 1}}, {"a": 2, "c": [1, 2]}])
+    assert result.split("\n") == ["a\tb\tc", '1\t{"x":1}\t', "2\t\t[1,2]"]
+
+
+def test_round_floats_keep_small_preserves_tiny_values():
+    assert round_floats({"p": 2.1e-13}) == {"p": 0.0}
+    assert round_floats({"p": 2.1e-13, "fc": 1.23456789}, keep_small=True) == {"p": 2.1e-13, "fc": 1.234568}

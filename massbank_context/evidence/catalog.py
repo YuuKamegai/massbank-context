@@ -1,11 +1,11 @@
 """索引に実在するメタデータだけを返す。"""
+import sqlite3
 
 
 def read_candidate_catalog(conn, *, accessions: list[str], inchikeys: list[str]) -> list[dict]:
     result = []
     old_factory = conn.row_factory
     try:
-        import sqlite3
         conn.row_factory = sqlite3.Row
         for accession in sorted(set(accessions)):
             row = conn.execute('SELECT * FROM records WHERE accession=?', (accession,)).fetchone()

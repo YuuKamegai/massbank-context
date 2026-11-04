@@ -12,6 +12,8 @@
 7. `get_comparison_evidence`で根拠版を固定して全必要ページを取得する。
    特徴量ページはnext_cursor、RDF等の詳細はnext_evidence_cursorを同じツールのcursorへ渡す。
    各詳細ページは最大64根拠。lookupsは状態と件数を返し、巨大なhitsを二重送信しない。
+   features/candidates/evidence/lookupsは列名1回のTSV。入れ子の値はJSON文字列、
+   値中のタブ・改行・バックスラッシュは`\t` `\n` `\\`にエスケープされる。詳細ページにもnext_cursorが残る。
    特徴量ページは約128KiBを目安に件数を減らすため、要求limitより少ない行でnext_cursorが返る場合がある。
    cursorが失効したら初めから取得し直す。大量の根拠は特徴量IDを絞って段階的に読む。
 8. `draft_comparison_findings`で事実と解釈の材料を取得する。経路検定は任意。
@@ -23,7 +25,7 @@
 各主張にfeature_ids/candidate_ids/evidence_ids/context_revisionを対応させ、実在するIDを引用する。
 一般知識はmodel_knowledgeと記す。RDF未ヒットを試料に存在しない証拠にしない。
 候補順位を背景で変更せず、候補共通の解釈と候補依存の仮説を区別する。
-根拠の参照整合性は`validate_claim_references`で確認できるが、意味の妥当性は研究者が評価する。
+根拠の参照整合性は`validate_comparison_claims`で全ページ分を確認できるが、意味の妥当性は研究者が評価する。
 
 背景の確認はサーバが本人確認する仕組みではなく、会話側が研究者の返答を受けて記録する手続き。
 背景変更後は旧背景に基づく回答を新背景での評価として提示しない。

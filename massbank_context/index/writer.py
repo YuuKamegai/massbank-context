@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable
 
 from massbank_context.core.binning import axis_entries
+from massbank_context.core.evidence_ids import canonical_json, stable_id
 from massbank_context.core.models import SpectrumRecord
 from massbank_context.index.mass_error import InstrumentErrorProfile
 from massbank_context.index.schema import DDL
@@ -66,6 +67,20 @@ def open_index(path: str | Path, create: bool = False) -> sqlite3.Connection:
     if create:
         create_schema(conn)
     return conn
+
+
+def open_index_readonly(path: str | Path) -> sqlite3.Connection:
+    """照会専用に開く。索引を書き換えない経路で使う。"""
+    return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+
+
+def index_fingerprint(path: str | Path, meta: dict) -> str:
+    """索引の版を識別する。
+
+    数 GB の索引を呼び出しのたびに全量ハッシュしないため、index_meta
+    （built_at を含むので再ビルドで必ず変わる）とファイルサイズで代用する。
+    """
+    return stable_id("index", [canonical_json(meta), str(Path(path).stat().st_size)])
 
 
 def read_meta(conn: sqlite3.Connection) -> dict | None:

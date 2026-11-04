@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from evidence_helpers import make_bundle, rewrite_table
+from evidence_helpers import make_bundle, read_tsv, rewrite_table
 from test_matcher import conn
 
 
@@ -72,7 +72,7 @@ def test_public_workflow_with_spectra_and_rdf(tmp_path, conn):
                 page = await call('get_comparison_evidence', analysis_id=aid, limit=1)
                 ids = set()
                 while True:
-                    ids.update(f['feature_id'] for f in page['features'])
+                    ids.update(f['feature_id'] for f in read_tsv(page['features']))
                     assert page['summary']['n_features_total'] == 8
                     if not page['next_cursor']:
                         break
@@ -81,9 +81,18 @@ def test_public_workflow_with_spectra_and_rdf(tmp_path, conn):
                 result = await call('draft_comparison_findings', analysis_id=aid,
                                     organism='10090', include_pathways=True)
                 assert result['readiness']['context_confirmed']
-                assert result['facts']['evidence']
+                evidence = read_tsv(result['facts']['evidence'])
+                assert evidence
                 assert result['hypotheses'][0]['claim'] is None
                 assert result['pathways']['n_features_total'] == 8
+                candidates = read_tsv(result['facts']['candidates'])
+                row = evidence[0]
+                claim = dict(claim_id='c1', feature_ids=[row['feature_id']],
+                             candidate_ids=[row['candidate_id']], evidence_ids=[row['evidence_id']],
+                             evidence_revision=result['evidence_revision'])
+                checked = await call('validate_comparison_claims', analysis_id=aid, claims=[claim])
+                assert checked['valid'], checked
+                assert any(c['source'] == 'massbank' for c in candidates)
 
     try:
         asyncio.run(run())

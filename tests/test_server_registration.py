@@ -11,6 +11,7 @@ EXPECTED_TOOLS = sorted([
     "get_comparison_evidence",
     "draft_comparison_findings",
     "draft_pathway_findings",
+    "validate_comparison_claims",
     "index_status",
     "inspect_spectrum",
     "load_differential",

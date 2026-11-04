@@ -1,5 +1,7 @@
 """候補の曖昧さを公開した統計用母集団への射影。"""
 from dataclasses import dataclass, asdict, is_dataclass
+from massbank_context.evidence.matching import TERMINAL_STATUSES
+from massbank_context.evidence.selection import mapping_failure
 from massbank_context.experiment.bundle import INCHIKEY_PATTERN
 from massbank_context.stats.activity import pathway_activity_rows
 
@@ -16,15 +18,18 @@ def build_population(bundle, candidates, match_status):
     candidates = [asdict(c) if is_dataclass(c) else c for c in candidates]
     grouped, exclusions = {}, {}
     linked = {s.feature_id for s in bundle.spectrum_links}
+    active_by_feature = {}
+    for c in candidates:
+        if c['status'] == 'active':
+            active_by_feature.setdefault(c['feature_id'], []).append(c)
     for feature in bundle.features:
         fid = feature.feature_id
-        active = [c for c in candidates if c['feature_id'] == fid and c['status'] == 'active']
+        active = active_by_feature.get(fid, [])
         status = match_status.get(fid, {})
         reason = None
-        mapping = bundle.manifest.get('provenance', {}).get('msms_link_statuses', {}).get(fid, {})
-        if mapping.get('status') in ('precursor_mismatch', 'metadata_missing', 'out_of_range'):
+        if mapping_failure(bundle, fid):
             reason = 'msms_mapping_failed'
-        elif fid in linked and status.get('status') != 'matched':
+        elif fid in linked and status.get('status') not in TERMINAL_STATUSES:
             reason = 'matching_incomplete'
         elif status.get('truncated'):
             reason = 'candidate_truncated'
@@ -73,9 +78,12 @@ def compute_pathways(projection, lookups, organism: str, min_members: int = 3):
         return dict(base, tested=False, reason='matching_incomplete')
     if not organism:
         return dict(base, tested=False, reason='organism_required')
+    lookups_by_key = {}
+    for lookup in lookups:
+        lookups_by_key.setdefault(lookup.get('inchikey'), []).append(lookup)
     memberships, pending = {}, []
     for c in projection.compounds:
-        relevant = [l for l in lookups if l.get('inchikey') == c['inchikey']]
+        relevant = lookups_by_key.get(c['inchikey'], [])
         if not relevant or any(l['status'] not in ('resolved', 'empty') for l in relevant):
             pending.append(c['inchikey'])
             continue
@@ -91,10 +99,12 @@ def compute_pathways(projection, lookups, organism: str, min_members: int = 3):
         return dict(base, tested=False, reason='lookup_incomplete', pending_inchikeys=pending)
     background = [c for c in projection.compounds if c['inchikey'] in memberships]
     rows, summary = pathway_activity_rows(background, memberships, min_members)
+    members = {}
+    for c in background:
+        for hit in memberships[c['inchikey']]:
+            members.setdefault(hit['pathway_id'], set()).update(c['feature_ids'])
     for row in rows:
-        row['feature_ids'] = sorted({fid for c in background
-                                     if any(h['pathway_id'] == row['pathway_id'] for h in memberships[c['inchikey']])
-                                     for fid in c['feature_ids']})
+        row['feature_ids'] = sorted(members.get(row['pathway_id'], ()))
     return dict(base, tested=any(r['tested'] for r in rows), rows=rows,
                 statistics=summary, n_lookup_complete=len(projection.compounds),
                 n_with_species_pathways=len(background), n_without_species_pathways=len(projection.compounds)-len(background),

@@ -214,8 +214,8 @@ def test_draft_reports_collapsed_spots(prepared):
 def test_draft_survives_tab_in_pathway_label(tmp_path, monkeypatch):
     """pathway_label にタブが含まれても top_pathways が壊れない。
 
-    TSV へ落として再パースしていたときは as_tsv がエスケープしないため列が
-    ずれ、facts.top_pathways が黙って壊れていた。共有した内部関数から
+    TSV へ落として再パースしていたときは（当時の as_tsv はエスケープしなかったため）
+    列がずれ、facts.top_pathways が黙って壊れていた。共有した内部関数から
     typed dict を直接受け取るので、往復そのものが無くなっている。
     """
     monkeypatch.setattr(config, "PATHWAY_CACHE_PATH",

@@ -2,6 +2,7 @@
 import csv
 import hashlib
 import json
+import re
 from pathlib import Path
 
 KEY_A = 'AAAAAAAAAAAAAA-BBBBBBBBBB-C'
@@ -72,3 +73,14 @@ def rewrite_table(manifest_path, role, change):
         writer.writerows(rows)
     file['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
     manifest_path.write_text(json.dumps(data), encoding='utf-8')
+
+
+def _unescape(cell: str) -> str:
+    return re.sub(r'\\(.)', lambda m: {'t': '\t', 'n': '\n', 'r': '\r'}.get(m.group(1), m.group(1)), cell)
+
+
+def read_tsv(text: str) -> list[dict]:
+    """公開ツールのTSVを読み戻す（as_tsvのエスケープを戻す）。"""
+    header, *lines = text.split('\n')
+    columns = header.split('\t')
+    return [dict(zip(columns, map(_unescape, line.split('\t')))) for line in lines]

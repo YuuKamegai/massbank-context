@@ -233,8 +233,8 @@ def _activity_payload(organism: str, min_members: int, top_k: int):
     rows は **typed dict のまま**の上位 top_k 行で、payload には candidates
     （TSV）が入っていない。TSV 化は公開ツールの出口だけで行う。
     report_tools はここから rows を直接受け取る — TSV に落として再パースすると、
-    型の推測をやり直すことになり、pathway_label にタブが含まれれば列がずれる
-    （as_tsv はエスケープしない）。
+    型の推測をやり直すことになる（as_tsv はタブ等をエスケープするが、
+    再パース側で戻す手間と型の喪失は残る）。
 
     rows は _ACTIVITY_COLUMNS へ射影する。wilcoxon_q は BH の内部量であり、
     fisher_q と並べると合成したくなる（spec §5.3）ので外へは出さない。
