@@ -14,10 +14,11 @@ from massbank_context.core.binning import NEUTRAL_LOSS, PRODUCT_ION, neighbour_b
 from massbank_context.core.models import QuerySpectrum
 from massbank_context.index.background import lookup_idf
 from massbank_context.index.writer import open_index_readonly, read_meta
-from massbank_context.spectral.matcher import DEFAULT_PRECURSOR_TOLERANCE, match_spectrum_result
+from massbank_context.spectral.matcher import (
+    BAND_PASS, BAND_WEAK, DEFAULT_PRECURSOR_TOLERANCE, match_spectrum_result)
 
 __all__ = ["ACQUISITION_CLASS", "MSMS_ACQUISITION_CLASS", "PRECURSOR_MARGIN", "FORWARD_TOP_K",
-           "RefBin", "ReferenceBins", "SharedResult", "open_index", "reference_bins",
+           "RefBin", "ReferenceBins", "SharedResult", "ForwardHit", "open_index", "reference_bins",
            "query_axis_bins", "shared_evidence", "forward_rank"]
 
 #: 外来の分子の走査が照合する層。測定原理の異なる層は跨がない（spec §6.1）。
@@ -155,21 +156,37 @@ def shared_evidence(ref: ReferenceBins, spectra: Sequence[QuerySpectrum],
     return max(results, key=lambda r: r.score)
 
 
-def forward_rank(conn: sqlite3.Connection, spectra: Sequence[QuerySpectrum],
-                 inchikey: str) -> int | None:
-    """特徴のスペクトルを照合した候補の中での InChIKey の順位（1 始まり）。
+@dataclass(frozen=True)
+class ForwardHit:
+    """順向きの照合の順位（1 始まり）と、その順位を決めた候補の band。"""
+    rank: int
+    band: str
 
-    重複を除いた InChIKey の順に並べ、複数のスペクトルがあれば最小を返す。
+
+def _forward_order(hit: ForwardHit) -> tuple[int, int]:
+    strength = {BAND_PASS: 0, BAND_WEAK: 1}.get(hit.band, 2)
+    return hit.rank, strength
+
+
+def forward_rank(conn: sqlite3.Connection, spectra: Sequence[QuerySpectrum],
+                 inchikey: str) -> ForwardHit | None:
+    """特徴のスペクトルを照合した候補の中での InChIKey の順位と band。
+
+    重複を除いた InChIKey の順に並べ、band はその InChIKey の先頭の候補のものを取る。
+    全候補が得点 0 なら順位は accession の文字列順で決まるので、順位だけでは同定の根拠に
+    ならない。複数のスペクトルがあれば順位が最小のもの、同順位なら band の強いものを返す。
     上位 FORWARD_TOP_K に無ければ None。
     """
-    best: int | None = None
+    best: ForwardHit | None = None
     for spectrum in spectra:
         if not spectrum.peaks:
             continue
         result = match_spectrum_result(conn, spectrum, ACQUISITION_CLASS,
                                        DEFAULT_PRECURSOR_TOLERANCE, FORWARD_TOP_K)
-        order = list(dict.fromkeys(c.inchikey for c in result.candidates))
-        if inchikey in order:
-            rank = order.index(inchikey) + 1
-            best = rank if best is None else min(best, rank)
+        first = {}
+        for candidate in result.candidates:
+            first.setdefault(candidate.inchikey, candidate)
+        if inchikey in first:
+            hit = ForwardHit(list(first).index(inchikey) + 1, first[inchikey].band)
+            best = hit if best is None else min(best, hit, key=_forward_order)
     return best

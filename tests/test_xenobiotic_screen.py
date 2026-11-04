@@ -100,14 +100,18 @@ def test_columns_and_levels_are_fixed():
 
 
 @pytest.mark.parametrize('pair, received_by, expected', [
-    (PairEvidence(True, True, True, 1, True, False), 'test', 'A'),
-    (PairEvidence(True, True, True, 2, None, False), 'test', 'B'),
-    (PairEvidence(False, True, False, None, True, False), 'test', 'C'),
-    (PairEvidence(False, False, True, None, True, False), 'test', 'C'),
-    (PairEvidence(False, True, False, None, None, False), 'test', 'D'),
-    (PairEvidence(False, True, False, None, True, False), 'both', 'D'),
-    (PairEvidence(False, True, False, None, None, True), 'both', 'C'),
-    (PairEvidence(False, False, False, None, True, True), 'test', None),
+    (PairEvidence(True, True, True, 1, 'PASS', True, False), 'test', 'A'),
+    (PairEvidence(True, True, False, 1, 'PASS', None, False), 'test', 'A'),
+    (PairEvidence(True, True, True, 2, 'PASS', None, False), 'test', 'B'),
+    (PairEvidence(True, True, True, 1, 'WEAK', None, False), 'test', 'B'),
+    (PairEvidence(True, True, False, 1, 'PRECURSOR_ONLY', True, False), 'test', 'C'),
+    (PairEvidence(True, True, False, 1, 'PRECURSOR_ONLY', None, False), 'test', 'D'),
+    (PairEvidence(False, True, False, None, None, True, False), 'test', 'C'),
+    (PairEvidence(False, False, True, None, None, True, False), 'test', 'C'),
+    (PairEvidence(False, True, False, None, None, None, False), 'test', 'D'),
+    (PairEvidence(False, True, False, None, None, True, False), 'both', 'D'),
+    (PairEvidence(False, True, False, None, None, None, True), 'both', 'C'),
+    (PairEvidence(False, False, False, None, None, True, True), 'test', None),
 ])
 def test_assign_level(pair, received_by, expected):
     assert assign_level(pair, received_by) == expected
@@ -124,7 +128,7 @@ def test_screen_levels_on_fixture(screened):
     assert 'parent_feature:k_parent' in hnk_x2['notes']
     assert _row(rows, 'x_msms', 'X1')['relation'] == 'msms_only'
     assert summary['levels'] == {'A': 1, 'B': 1, 'C': 2, 'D': 1, 'none': 2}
-    assert summary['versions'] == {'adduct_table': 'xeno-adducts-1', 'shift_table': 'xeno-shifts-1',
+    assert summary['versions'] == {'adduct_table': 'xeno-adducts-2', 'shift_table': 'xeno-shifts-1',
                                    'thresholds': THRESHOLDS_VERSION}
     assert 'rows' not in summary and len({r['feature_id'] for r in rows}) == 7
 
@@ -149,11 +153,14 @@ def test_feature_without_mz_is_kept(screened):
     assert 'no_mz' in _row(rows, 'no_mz', '')['notes']
 
 
-def test_unrelated_feature_is_blank_after_level(screened):
+def test_unrelated_feature_keeps_detection_counts(screened):
+    # 検出の例数は特徴の値で entry に依らない。処理群だけの未知の特徴を TSV で探せるようにする。
     _, rows = screened
     row = _row(rows, 'endo', '')
     assert row['mz'] == '300.2' and row['significant'] == 'true'
-    assert all(row[c] == '' for c in SCREEN_COLUMNS[6:-1])
+    assert (row['detected_test'], row['detected_reference']) == ('6', '6')
+    filled = {'detected_test', 'detected_reference'}
+    assert all(row[c] == '' for c in SCREEN_COLUMNS[6:-1] if c not in filled)
 
 
 def test_rows_follow_feature_order_then_strength(screened):
@@ -175,6 +182,54 @@ def test_relation_row_repeats_pair_values_and_rounds(screened):
     assert int(row['msms_shared_n']) >= 3
     pairs = [r for r in rows if r['feature_id'] == 'k_hnk' and r['entry_id'] == 'X1']
     assert len({(r['level'], r['msms_shared_score'], r['detected_test']) for r in pairs}) == 1
+
+
+def test_rank_one_without_pass_band_is_not_level_a(tmp_path, monkeypatch):
+    # 断片が合わず質量だけで順位 1 になった特徴は A にならず、理由が行から読める
+    only_mass = ('k_mass', 238.0990, [50.0, 60.0], (6, 0), [100, 200, 300, 400, 500, 600])
+    _with_features(monkeypatch, only_mass)
+    rows = _read_tsv(run_screen(*_analysis(tmp_path, monkeypatch), test_group='Drug', ppm=5)['output_path'])
+    row = _row(rows, 'k_mass', 'X1')
+    assert row['level'] == 'C' and row['forward_rank'] == '1'
+    assert 'forward_band:PRECURSOR_ONLY' in row['notes'].split(';')
+    assert _row(rows, 'k_parent', 'X1')['level'] == 'A'
+    assert 'forward_band:PASS' in _row(rows, 'k_parent', 'X1')['notes'].split(';')
+
+
+def test_parent_without_pass_band_gives_no_parent_link(tmp_path, monkeypatch):
+    # 親の特徴が質量だけなら、連動の親に入れない
+    _with_features(monkeypatch, change=lambda f: (
+        (f[0], f[1], [50.0, 60.0]) + f[3:] if f[0] == 'k_parent' else f))
+    rows = _read_tsv(run_screen(*_analysis(tmp_path, monkeypatch), test_group='Drug', ppm=5)['output_path'])
+    row = _row(rows, 'k_hnk', 'X2')
+    assert row['rho_parent'] == '' and 'parent_feature' not in row['notes']
+
+
+def test_conflicting_adduct_count_is_noted_per_pair(registered, monkeypatch):
+    store, aid = registered
+    _alter_bundle(monkeypatch, store, lambda b: replace(
+        b, features=tuple(replace(f, adduct='[M+Na]1+') if f.feature_id == 'k_parent'
+                          else replace(f, adduct='[M+H]1+') if f.feature_id == 'k_frag' else f
+                          for f in b.features)))
+    summary = run_screen(store, aid, test_group='Drug', ppm=5)
+    rows = _read_tsv(summary['output_path'])
+    # 損失を除けば [M+H]+ なので、k_frag の [M+H-H2O]+ は落ちない
+    assert _row(rows, 'k_frag', 'X1')['relation'] == 'parent|[M+H-H2O]+'
+    # k_parent は質量の一致を落とされ、MS/MS の共有だけが残る
+    row = _row(rows, 'k_parent', 'X1')
+    assert row['relation'] == 'msms_only'
+    notes = dict(n.split(':', 1) for n in row['notes'].split(';') if ':' in n)
+    assert int(notes['adduct_conflict_dropped']) >= 1
+    assert summary['counts']['adduct_conflict_dropped'] >= int(notes['adduct_conflict_dropped'])
+
+
+def test_dropped_count_is_noted_on_feature_without_pairs(registered, monkeypatch):
+    store, aid = registered
+    _alter_bundle(monkeypatch, store, lambda b: replace(
+        b, features=tuple(replace(f, adduct='[M+Na]1+') if f.feature_id == 'mass_only' else f
+                          for f in b.features)))
+    rows = _read_tsv(run_screen(store, aid, test_group='Drug', ppm=5)['output_path'])
+    assert any(n.startswith('adduct_conflict_dropped:') for n in _row(rows, 'mass_only', '')['notes'].split(';'))
 
 
 def test_test_side_follows_argument(registered):

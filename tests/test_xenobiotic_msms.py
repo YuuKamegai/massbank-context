@@ -68,5 +68,20 @@ def test_unknown_inchikey_has_no_reference(index_conn):
 
 
 def test_forward_rank(index_conn):
-    assert forward_rank(index_conn, [_spectrum(238.0990, [125.0153, 207.0571])], KETAMINE) == 1
+    hit = forward_rank(index_conn, [_spectrum(238.0990, [125.0153, 207.0571])], KETAMINE)
+    assert (hit.rank, hit.band) == (1, 'PASS')
     assert forward_rank(index_conn, [_spectrum(500.3000, [125.0153])], KETAMINE) is None
+
+
+def test_forward_rank_reports_band_of_the_candidate(index_conn):
+    # 断片が 1 本も合わなくても、前駆体の質量が合えば順位は 1 になる。それを band で読めるようにする。
+    only_mass = forward_rank(index_conn, [_spectrum(238.0990, [50.0, 60.0])], KETAMINE)
+    assert (only_mass.rank, only_mass.band) == (1, 'PRECURSOR_ONLY')
+    weak = forward_rank(index_conn, [_spectrum(238.0990, [125.0153, 50.0])], KETAMINE)
+    assert (weak.rank, weak.band) == (1, 'WEAK')
+
+
+def test_forward_rank_prefers_the_stronger_band_at_the_same_rank(index_conn):
+    spectra = [_spectrum(238.0990, [50.0, 60.0]), _spectrum(238.0990, [125.0153, 207.0571])]
+    hit = forward_rank(index_conn, spectra, KETAMINE)
+    assert (hit.rank, hit.band) == (1, 'PASS')

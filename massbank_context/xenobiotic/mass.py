@@ -81,15 +81,17 @@ def _normalize_adduct(text: str) -> str:
     return s
 
 
-_KNOWN_LABELS = frozenset(
-    ion_label(a.name, loss) for a in ADDUCTS for loss in (None, *SOURCE_LOSSES)
-)
+#: 表のイオンのラベル -> 損失を除いた付加体。spec §4.1 で損失は付加体の後に付くので、
+#: [M+H-NH3]+ の付加体は [M+H]+ である。
+_BASE_ADDUCT = {
+    ion_label(a.name, loss): a.name for a in ADDUCTS for loss in (None, *SOURCE_LOSSES)
+}
 
 
 def adduct_recognized(text: str) -> bool:
     """特徴の付加体の記載が表のイオンとして読めるか（空白だけの記載は記載なしと同じ）。"""
     label = _normalize_adduct(text)
-    return not label or label in _KNOWN_LABELS
+    return not label or label in _BASE_ADDUCT
 
 
 def find_mass_relations(
@@ -99,14 +101,16 @@ def find_mass_relations(
     ppm: float,
     ppm_bands: list[dict],
     max_shifts: int,
-) -> tuple[dict[tuple[str, str], list[MassRelation]], Counter]:
+) -> tuple[dict[tuple[str, str], list[MassRelation]], Counter, Counter]:
     """各 entry の理論 m/z が窓に入る特徴を探す。鍵は (feature_id, entry_id)。
 
     各リストは (質量差の数, |ppm|) 順で、1 つの (特徴, entry) に複数あれば全部残す。
-    特徴に付加体の記載があり、認識できて、関係のイオンと違えば落とす。認識できない
+    特徴に付加体の記載があり、認識できて、損失を除いた付加体同士が違えば落とす。認識できない
     記載は残して ``adduct_unrecognized`` を特徴の数で数える（``no_mz`` も特徴の数）。
+    戻り値は (一致, 数, 組ごとの落とした一致の数)。組の鍵は一致と同じ。
     """
     counts: Counter = Counter()
+    dropped: Counter = Counter()
     indexed: list[tuple[float, Feature]] = []
     adduct_of: dict[str, str | None] = {}
     for feature in features:
@@ -115,10 +119,10 @@ def find_mass_relations(
             continue
         indexed.append((feature.mz, feature))
         label = _normalize_adduct(feature.adduct) if feature.adduct else None
-        if label and label not in _KNOWN_LABELS:
+        if label and label not in _BASE_ADDUCT:
             counts["adduct_unrecognized"] += 1
             label = None
-        adduct_of[feature.feature_id] = label or None
+        adduct_of[feature.feature_id] = _BASE_ADDUCT[label] if label else None
     indexed.sort(key=lambda item: item[0])
     mzs = [mz for mz, _ in indexed]
 
@@ -129,9 +133,10 @@ def find_mass_relations(
             lo = bisect_left(mzs, form.mz * (1 - tol * 1e-6))
             hi = bisect_right(mzs, form.mz * (1 + tol * 1e-6))
             for mz, feature in indexed[lo:hi]:
-                label = adduct_of[feature.feature_id]
-                if label is not None and label != form.ion:
+                adduct = adduct_of[feature.feature_id]
+                if adduct is not None and adduct != form.adduct:
                     counts["adduct_conflict_dropped"] += 1
+                    dropped[(feature.feature_id, entry.entry_id)] += 1
                     continue
                 result.setdefault((feature.feature_id, entry.entry_id), []).append(
                     MassRelation(
@@ -141,4 +146,4 @@ def find_mass_relations(
                 )
     for relations in result.values():
         relations.sort(key=lambda r: (len(r.shifts), abs(r.ppm)))
-    return result, counts
+    return result, counts, dropped

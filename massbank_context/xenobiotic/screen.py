@@ -28,8 +28,9 @@ from massbank_context.experiment.bundle import (
     POLARITIES, parse_intensities, parse_samples, role_path)
 from massbank_context.xenobiotic.mass import (
     MassRelation, adduct_recognized, find_mass_relations, validate_ppm_bands)
+from massbank_context.spectral.matcher import BAND_PASS
 from massbank_context.xenobiotic.msms import (
-    SharedResult, forward_rank, open_index, reference_bins, shared_evidence)
+    ForwardHit, SharedResult, forward_rank, open_index, reference_bins, shared_evidence)
 from massbank_context.xenobiotic.pattern import (
     SampleSides, detection_counts, group_bias, parent_linked, parent_rho, sample_sides)
 from massbank_context.xenobiotic.registry import XenobioticError, XenoEntry, load_registration
@@ -49,6 +50,7 @@ SNAPSHOT_KIND = 'xenobiotic_screen'
 MAX_ROWS_LIMIT = 200
 _FEATURE_ID = SCREEN_COLUMNS.index('feature_id')
 _LEVEL = SCREEN_COLUMNS.index('level')
+_DETECTED_TEST = SCREEN_COLUMNS.index('detected_test')
 
 
 @dataclass(frozen=True)
@@ -58,13 +60,18 @@ class PairEvidence:
     mass_any: bool
     msms_hit: bool
     forward_rank: int | None
+    forward_band: str | None
     bias: bool | None
     parent_link: bool
 
 
 def assign_level(pair: PairEvidence, received_by: str) -> str | None:
-    """組の水準（spec §5）。both は群の偏りを使わず、親との連動だけを出方とする。"""
-    if pair.mass_parent and pair.forward_rank == 1:
+    """組の水準（spec §5）。both は群の偏りを使わず、親との連動だけを出方とする。
+
+    順位 1 でも band が PASS でなければ A にしない。PRECURSOR_ONLY は精密質量が合っただけで、
+    全候補が得点 0 なら順位は accession の文字列順で決まる。
+    """
+    if pair.mass_parent and pair.forward_rank == 1 and pair.forward_band == BAND_PASS:
         return 'A'
     if pair.mass_any and pair.msms_hit:
         return 'B'
@@ -128,7 +135,7 @@ class _MsmsStrand:
     unavailable: dict[str, str]  # entry_id -> 理由
     shared: dict[tuple[str, str], SharedResult]
     hits: frozenset[tuple[str, str]]
-    ranks: dict[tuple[str, str], int | None]
+    ranks: dict[tuple[str, str], ForwardHit | None]
 
 
 def _msms_strand(conn, meta: dict, entries: Sequence[XenoEntry], polarity: str,
@@ -222,11 +229,18 @@ def _parent_link(feature_id: str, entry: XenoEntry, relations: Sequence[MassRela
     return max(scored, key=lambda item: item[:2], default=None)
 
 
+def _first_evidence(found: Sequence[MassRelation], is_hit: bool,
+                    forward: ForwardHit | None) -> PairEvidence:
+    return PairEvidence(any(not r.shifts for r in found), bool(found), is_hit,
+                        forward.rank if forward else None, forward.band if forward else None,
+                        None, False)
+
+
 def _judge_pairs(features: Sequence[Feature], entries: Sequence[XenoEntry], relations: dict,
                  msms: _MsmsStrand, pattern: _PatternStrand) -> dict[str, list[_Pair]]:
     """特徴ごとの組を水準の強い順 → entry_id の順で返す。
 
-    一巡目で全組の A を決める（A は質量と順位だけで決まる）。二巡目で親の A の特徴と
+    一巡目で全組の A を決める（A は質量と順位と band だけで決まる）。二巡目で親の A の特徴と
     比べて連動を見て、残りの水準を決める。
     """
     first: dict[tuple[str, str], PairEvidence] = {}
@@ -237,8 +251,7 @@ def _judge_pairs(features: Sequence[Feature], entries: Sequence[XenoEntry], rela
             found = relations.get(key, [])
             if not found and key not in msms.hits:
                 continue
-            first[key] = PairEvidence(any(not r.shifts for r in found), bool(found),
-                                      key in msms.hits, msms.ranks.get(key), None, False)
+            first[key] = _first_evidence(found, key in msms.hits, msms.ranks.get(key))
             if assign_level(first[key], entry.received_by) == 'A':
                 a_features.setdefault(entry.entry_id, []).append(feature.feature_id)
 
@@ -272,7 +285,8 @@ def _msms_state(feature_id: str, spectra: dict[str, list[QuerySpectrum]]) -> str
 
 
 def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
-           pattern_reason: str | None, parent_feature: str | None) -> str:
+           pattern_reason: str | None, parent_feature: str | None,
+           forward_band: str | None = None, n_dropped: int = 0) -> str:
     notes = []
     if feature.mz is None:
         notes.append('no_mz')
@@ -284,6 +298,10 @@ def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
         notes.append(f'pattern_unavailable:{pattern_reason}')
     if parent_feature:
         notes.append(f'parent_feature:{parent_feature}')
+    if forward_band:
+        notes.append(f'forward_band:{forward_band}')
+    if n_dropped:
+        notes.append(f'adduct_conflict_dropped:{n_dropped}')
     if feature.mz is not None and feature.adduct and not adduct_recognized(feature.adduct):
         notes.append('adduct_unrecognized')
     return ';'.join(notes)
@@ -291,8 +309,11 @@ def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
 
 def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                 spectra: dict[str, list[QuerySpectrum]], msms: _MsmsStrand,
-                pattern: _PatternStrand) -> list[list]:
+                pattern: _PatternStrand, dropped: Counter) -> list[list]:
     rows: list[list] = []
+    dropped_by_feature: Counter = Counter()
+    for (fid, _entry_id), n in dropped.items():
+        dropped_by_feature[fid] += n
     for feature in features:
         fid = feature.feature_id
         head = [fid, round_floats(feature.mz), round_floats(feature.rt),
@@ -302,8 +323,11 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
         counts = pattern.counts[fid] if pattern.counts else (None, None)
         reason = pattern.reason or ('detection_unknown' if None in counts else None)
         if not pairs[fid]:
-            rows.append(head + [None] * (len(SCREEN_COLUMNS) - len(head) - 1)
-                        + [_notes(feature, state, None, reason, None)])
+            # 検出の例数は特徴の値で entry に依らない。水準の無い特徴の行にも入れる。
+            blank = _DETECTED_TEST - len(head)
+            rows.append(head + [None] * blank + [counts[0], counts[1], None]
+                        + [_notes(feature, state, None, reason, None,
+                                  n_dropped=dropped_by_feature[fid])])
             continue
         for pair in pairs[fid]:
             entry, shared = pair.entry, pair.shared
@@ -312,7 +336,8 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                     None if shared is None else ';'.join(shared.formulas),
                     pair.evidence.forward_rank, counts[0], counts[1], round_floats(pair.rho),
                     _notes(feature, state, msms.unavailable.get(entry.entry_id), reason,
-                           pair.parent_feature)]
+                           pair.parent_feature, pair.evidence.forward_band,
+                           dropped[(fid, entry.entry_id)])]
             start = [pair.level, entry.entry_id, entry.role]
             for relation in pair.relations:
                 rows.append(head + start + [relation.relation, round_floats(relation.theoretical_mz),
@@ -410,7 +435,8 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
 
     features = bundle.features
     spectra = _feature_spectra(bundle)
-    relations, mass_counts = find_mass_relations(features, entries, polarity, ppm, bands, max_shifts)
+    relations, mass_counts, dropped = find_mass_relations(features, entries, polarity, ppm, bands,
+                                                          max_shifts)
     conn, meta = open_index()
     try:
         msms = _msms_strand(conn, meta, entries, polarity, spectra, relations)
@@ -418,7 +444,7 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
         conn.close()
     pattern = _pattern_strand(store, analysis_id, bundle, test_side)
     pairs = _judge_pairs(features, entries, relations, msms, pattern)
-    rows = _build_rows(features, pairs, spectra, msms, pattern)
+    rows = _build_rows(features, pairs, spectra, msms, pattern, dropped)
     summary = _summarize(features, entries, pairs, spectra, msms, pattern, bundle.manifest,
                          mass_counts, len(rows))
 

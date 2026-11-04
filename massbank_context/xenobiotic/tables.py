@@ -30,7 +30,7 @@ __all__ = [
     "ion_label",
 ]
 
-ADDUCT_TABLE_VERSION = "xeno-adducts-1"
+ADDUCT_TABLE_VERSION = "xeno-adducts-2"
 SHIFT_TABLE_VERSION = "xeno-shifts-1"
 THRESHOLDS_VERSION = "xeno-thresholds-2026-11-05"
 
@@ -106,6 +106,7 @@ class IonForm:
     shifts: tuple[str, ...]
     ion: str
     mz: float
+    adduct: str  # 損失を除いた付加体の名前
 
     @property
     def relation(self) -> str:
@@ -125,10 +126,19 @@ def _mass(formula: str) -> float:
     return monoisotopic_mass(parse_formula(formula)) if formula else 0.0
 
 
+def _losable(shifted: dict[str, int], adduct: Adduct, loss: str) -> bool:
+    """質量差を適用した組成 × 分子数 ＋ 付加体の add − remove の中に、損失の原子が足りるか。"""
+    molecules = {element: n * adduct.n_molecules for element, n in shifted.items()}
+    ion = shift_composition(molecules, parse_formula(adduct.add) if adduct.add else {},
+                            parse_formula(adduct.remove) if adduct.remove else {})
+    return ion is not None and shift_composition(ion, {}, parse_formula(loss)) is not None
+
+
 def ion_forms(composition: dict[str, int], polarity: str, max_shifts: int) -> list[IonForm]:
     """組成式から、質量差（最大 ``max_shifts`` 個の組み合わせ）× 付加体 × 損失の理論 m/z を並べる。
 
     質量差は重複なしの組み合わせ。正味の質量差が 1e-6 Da 未満の組と、元素数が負になる組は作らない。
+    損失は、イオンの組成に原子が足りるときだけ作る（酸素の無い分子に −H2O を付けない）。
     理論 m/z が 1e-6 Da 未満で一致する形は 1 つに畳み、質量差の数が少ない → 損失なし →
     付加体の表の順 → 質量差の表の順で最初のものを残す。
     """
@@ -155,11 +165,13 @@ def ion_forms(composition: dict[str, int], polarity: str, max_shifts: int) -> li
             for li, loss in enumerate(losses):
                 loss_mass = _mass(loss) if loss else 0.0
                 for ai, adduct in adducts:
+                    if loss and not _losable(shifted, adduct, loss):
+                        continue
                     mz = (
                         adduct.n_molecules * mass + _mass(adduct.add) - _mass(adduct.remove)
                         - adduct.charge * ELECTRON_MASS - loss_mass
                     ) / abs(adduct.charge)
-                    candidates.append(((k, li, ai, ci), IonForm(names, ion_label(adduct.name, loss), mz)))
+                    candidates.append(((k, li, ai, ci), IonForm(names, ion_label(adduct.name, loss), mz, adduct.name)))
 
     candidates.sort(key=lambda item: item[0])
     kept: list[IonForm] = []
