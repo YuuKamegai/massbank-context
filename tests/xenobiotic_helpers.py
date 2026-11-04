@@ -90,3 +90,64 @@ def make_v3_bundle(root: Path, *, version: int = 3, polarity: str | None = 'posi
     path = root / 'manifest.json'
     path.write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
     return path
+
+
+KETAMINE_KEY = 'YQEZLKZALYSWHR-UHFFFAOYSA-N'
+DECOY_KEY = 'ZZZZZZZZZZZZZZ-ZZZZZZZZZZ-Z'
+BIN_WIDTH = 0.0075
+# mz, 強度, 組成式
+_KETAMINE_PEAKS = [(125.0153, 999, 'C7H6Cl+'), (207.0571, 500, 'C12H12ClO+'),
+                   (220.0888, 400, 'C13H15ClN+'), (89.0386, 100, 'C7H5+'), (238.0993, 300, None)]
+_PRODUCT_IDF = {125.0153: 4.0, 207.0571: 1.0, 220.0888: 1.0, 89.0386: 1.0}
+_LOSS_IDF = {113.0840: 1.0, 31.0422: 0.5, 18.0105: 0.5, 149.0607: 1.0}
+
+
+def make_index(path: Path) -> Path:
+    """LC-ESI-MS2 の合成索引（ケタミン 2 件・おとり 1 件）。照合がそのまま動く形で書く。"""
+    import sqlite3
+    from massbank_context.core.binning import NEUTRAL_LOSS, PRODUCT_ION, to_bin
+    from massbank_context.index.schema import DDL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.executescript(DDL)
+    records = [(1, 'MSBNK-T-1', KETAMINE_KEY, 238.0993, _KETAMINE_PEAKS),
+               (2, 'MSBNK-T-2', KETAMINE_KEY, 238.0993, _KETAMINE_PEAKS),
+               (3, 'MSBNK-T-3', DECOY_KEY, 147.0804, [(91.0542, 800, None), (147.0804, 300, None)])]
+    for record_id, accession, key, precursor, peaks in records:
+        conn.execute("INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL)",
+                     (record_id, accession, key, precursor, '[M+H]+', 'POSITIVE', 'LC-ESI-QTOF',
+                      'MS2', 'LC-ESI-MS2', 'high'))
+        for mz, intensity, formula in peaks:
+            conn.execute("INSERT INTO peaks VALUES (?,?,?,?,?)",
+                         (record_id, PRODUCT_ION, to_bin(mz, BIN_WIDTH), intensity, formula))
+            if precursor - mz >= 0.5:
+                conn.execute("INSERT INTO peaks VALUES (?,?,?,?,NULL)",
+                             (record_id, NEUTRAL_LOSS, to_bin(precursor - mz, BIN_WIDTH), intensity))
+    conn.executemany("INSERT INTO compounds VALUES (?,?,?,?)",
+                     [(KETAMINE_KEY, 'C13H16ClNO', 237.092, 'ketamine'),
+                      (DECOY_KEY, 'C10H10O', 146.0732, 'decoy')])
+    for axis, table in ((PRODUCT_ION, _PRODUCT_IDF), (NEUTRAL_LOSS, _LOSS_IDF)):
+        conn.executemany("INSERT INTO axis_background VALUES ('LC-ESI-MS2','POSITIVE',?,?,?,?)",
+                         [(axis, to_bin(mz, BIN_WIDTH), 1, idf) for mz, idf in table.items()])
+    meta = {'bin_width': BIN_WIDTH, 'acquisition_classes': json.dumps(['LC-ESI-MS2']),
+            'n_records': 3, 'n_inchikey': 2, 'built_at': '2026-11-04T00:00:00Z'}
+    conn.executemany("INSERT INTO index_meta VALUES (?,?)", [(k, str(v)) for k, v in meta.items()])
+    conn.commit()
+    conn.close()
+    return path
+
+
+def registered_analysis(tmp_path: Path, monkeypatch, *, version: int = 3, detection: str = 'known'):
+    """v3（または v2）バンドルを登録した (EvidenceStore, analysis_id)。
+
+    config.ARTIFACTS_PATH と config.INDEX_PATH を差し替える（既定の出力先が前者を読むため）。
+    """
+    from massbank_context.core import config
+    from massbank_context.evidence.store import EvidenceStore
+    from massbank_context.experiment.bundle import load_bundle
+    artifacts = tmp_path / 'artifacts'
+    monkeypatch.setattr(config, 'ARTIFACTS_PATH', artifacts)
+    monkeypatch.setattr(config, 'INDEX_PATH', make_index(tmp_path / 'index' / 'massbank.sqlite'))
+    store = EvidenceStore(artifacts)
+    manifest = make_v3_bundle(tmp_path / 'bundle', version=version, detection=detection)
+    return store, store.register(load_bundle(manifest))
