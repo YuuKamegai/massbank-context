@@ -9,6 +9,7 @@ import pytest
 import xenobiotic_helpers
 from massbank_context.core import config
 from massbank_context.xenobiotic import msms, screen
+from massbank_context.xenobiotic.mass import MassRelation
 from massbank_context.xenobiotic.registry import XenobioticError, register
 from massbank_context.xenobiotic.screen import (
     LEVELS, SCREEN_COLUMNS, PairEvidence, assign_level, get_screen_rows, resolve_polarity,
@@ -117,18 +118,52 @@ def test_assign_level(pair, received_by, expected):
     assert assign_level(pair, received_by) == expected
 
 
+@pytest.mark.parametrize('pair, received_by, expected', [
+    # 損失つきの一致と群の偏りだけでは C にしない
+    (PairEvidence(False, True, False, None, None, True, False, False), 'test', 'D'),
+    # 親との連動があれば C
+    (PairEvidence(False, True, False, None, None, True, True, False), 'test', 'C'),
+    (PairEvidence(False, True, False, None, None, None, True, False), 'test', 'C'),
+    (PairEvidence(False, True, False, None, None, None, True, False), 'both', 'C'),
+    # MS/MS の共有があれば B の条件を満たす（C より強い）
+    (PairEvidence(False, True, True, None, None, True, False, False), 'test', 'B'),
+    # 損失の無い一致が 1 つでもあれば従来どおり
+    (PairEvidence(False, True, False, None, None, True, False, True), 'test', 'C'),
+    # 質量の一致の無い MS/MS の共有は損失と関係がない
+    (PairEvidence(False, False, True, None, None, True, False, False), 'test', 'C'),
+])
+def test_loss_only_mass_needs_more_than_group_bias_for_c(pair, received_by, expected):
+    assert assign_level(pair, received_by) == expected
+
+
+@pytest.mark.parametrize('ion, has_loss', [
+    ('[M+H]+', False), ('[M+H-NH3]+', True), ('[M-H]-', False), ('[M-H-CO2]-', True),
+    ('[2M+H-H2O]+', True), ('[M+2H]2+', False),
+])
+def test_mass_relation_knows_its_loss(ion, has_loss):
+    assert MassRelation('f', 'X1', (), ion, 100.0, 0.0).has_loss is has_loss
+
+
+def test_first_evidence_marks_a_pair_with_any_plain_match():
+    plain = MassRelation('f', 'X1', (), '[M+H]+', 100.0, 0.0)
+    lossy = MassRelation('f', 'X1', (), '[M+H-NH3]+', 100.0, 0.0)
+    assert screen._first_evidence([lossy], False, None).mass_plain is False
+    assert screen._first_evidence([lossy, plain], False, None).mass_plain is True
+
+
 def test_screen_levels_on_fixture(screened):
     summary, rows = screened
     level = _feature_levels(rows)
-    assert level == {'k_parent': 'A', 'k_hnk': 'B', 'k_frag': 'C', 'x_msms': 'C',
+    # k_frag は損失つきの一致（[M+H-H2O]+）と群の偏りだけで、親との連動が無いので D
+    assert level == {'k_parent': 'A', 'k_hnk': 'B', 'k_frag': 'D', 'x_msms': 'C',
                      'mass_only': 'D', 'endo': '', 'no_mz': ''}
     hnk_x2 = _row(rows, 'k_hnk', 'X2')
     assert hnk_x2['level'] == 'C' and float(hnk_x2['rho_parent']) == pytest.approx(1.0)
     assert 'msms_unavailable:no_inchikey' in hnk_x2['notes']
     assert 'parent_feature:k_parent' in hnk_x2['notes']
     assert _row(rows, 'x_msms', 'X1')['relation'] == 'msms_only'
-    assert summary['levels'] == {'A': 1, 'B': 1, 'C': 2, 'D': 1, 'none': 2}
-    assert summary['versions'] == {'adduct_table': 'xeno-adducts-2', 'shift_table': 'xeno-shifts-1',
+    assert summary['levels'] == {'A': 1, 'B': 1, 'C': 1, 'D': 2, 'none': 2}
+    assert summary['versions'] == {'adduct_table': 'xeno-adducts-3', 'shift_table': 'xeno-shifts-1',
                                    'thresholds': THRESHOLDS_VERSION}
     assert 'rows' not in summary and len({r['feature_id'] for r in rows}) == 7
 
@@ -170,6 +205,45 @@ def test_empty_spectrum_links_are_reported_as_unavailable(registered, monkeypatc
     unavailable = run_screen(store, aid, test_group='Drug', ppm=5)['unavailable']
     assert unavailable['msms_all'] == 'no_spectrum_links'
     assert unavailable['spectrum_links_status'] == 'not_provided'
+
+
+@pytest.mark.parametrize('status', ['not_provided', 'id_space_mismatch', 'id_space_unverified', None])
+def test_unverified_empty_links_make_the_msms_strand_unavailable(registered, monkeypatch, status):
+    # MS/MS の有無が分からないので、全特徴を no_msms と言わない
+    store, aid = registered
+
+    def no_links(bundle):
+        provenance = {} if status is None else {'spectrum_links_status': status}
+        return replace(bundle, spectrum_links=(), manifest=dict(bundle.manifest, provenance=provenance))
+
+    _alter_bundle(monkeypatch, store, no_links)
+    summary = run_screen(store, aid, test_group='Drug', ppm=5)
+    rows = _read_tsv(summary['output_path'])
+    assert summary['unavailable']['msms_all'] == 'no_spectrum_links'
+    assert summary['unavailable']['spectrum_links_status'] == status
+    assert summary['unavailable']['n_features_without_msms'] is None
+    assert summary['counts']['no_msms'] == 0
+    assert summary['levels']['A'] == summary['levels']['B'] == 0
+    assert all('no_msms' not in row['notes'] for row in rows)
+    assert 'msms_unavailable:no_spectrum_links' in _row(rows, 'k_parent', 'X1')['notes']
+    assert 'msms_unavailable:no_spectrum_links' in _row(rows, 'endo', '')['notes']
+
+
+def test_verified_empty_links_mean_no_msms(registered, monkeypatch):
+    # 対応づけを確かめた上で空なら、MS/MS が無いのは事実
+    store, aid = registered
+
+    def no_links(bundle):
+        manifest = dict(bundle.manifest, provenance={'spectrum_links_status': 'verified_alignment'})
+        return replace(bundle, spectrum_links=(), manifest=manifest)
+
+    _alter_bundle(monkeypatch, store, no_links)
+    summary = run_screen(store, aid, test_group='Drug', ppm=5)
+    rows = _read_tsv(summary['output_path'])
+    assert summary['unavailable']['msms_all'] is None
+    assert summary['unavailable']['n_features_without_msms'] == 7
+    assert summary['counts']['no_msms'] == 7
+    assert 'no_msms' in _row(rows, 'k_parent', 'X1')['notes']
 
 
 def test_feature_without_mz_is_kept(screened):

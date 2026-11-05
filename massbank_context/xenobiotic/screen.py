@@ -63,6 +63,7 @@ class PairEvidence:
     forward_band: str | None
     bias: bool | None
     parent_link: bool
+    mass_plain: bool = True  # 損失の無い質量の一致が 1 つでもあるか
 
 
 def assign_level(pair: PairEvidence, received_by: str) -> str | None:
@@ -70,6 +71,9 @@ def assign_level(pair: PairEvidence, received_by: str) -> str | None:
 
     順位 1 でも band が PASS でなければ A にしない。PRECURSOR_ONLY は精密質量が合っただけで、
     全候補が得点 0 なら順位は accession の文字列順で決まる。
+
+    損失つきの質量の一致だけの組は、群の偏りでは C にしない。r2 でおとりの C を増やしたのは
+    この組だった。MS/MS の共有があれば先に B になるので、ここで効くのは親との連動だけ。
     """
     if pair.mass_parent and pair.forward_rank == 1 and pair.forward_band == BAND_PASS:
         return 'A'
@@ -77,7 +81,8 @@ def assign_level(pair: PairEvidence, received_by: str) -> str | None:
         return 'B'
     strand = pair.mass_any or pair.msms_hit
     pattern = pair.parent_link if received_by == 'both' else pair.bias is True or pair.parent_link
-    if strand and pattern:
+    loss_only = pair.mass_any and not pair.mass_plain
+    if strand and pattern and (not loss_only or pair.parent_link):
         return 'C'
     return 'D' if strand else None
 
@@ -136,10 +141,24 @@ class _MsmsStrand:
     shared: dict[tuple[str, str], SharedResult]
     hits: frozenset[tuple[str, str]]
     ranks: dict[tuple[str, str], ForwardHit | None]
+    all_reason: str | None = None  # 筋全体が使えない理由
+
+
+def _links_unavailable(bundle: EvidenceBundle) -> str | None:
+    """links が空で対応づけも確かめられていないとき、MS/MS の筋全体が使えない理由。
+
+    ``verified_alignment`` で空なら、対応づけた結果 MS/MS が無かったという事実なので ``no_msms``。
+    それ以外の空は MS/MS の有無が分からないので、全特徴を ``no_msms`` と言わない。
+    """
+    status = bundle.manifest.get('provenance', {}).get('spectrum_links_status')
+    if bundle.spectrum_links or status == 'verified_alignment':
+        return None
+    return 'no_spectrum_links'
 
 
 def _msms_strand(conn, meta: dict, entries: Sequence[XenoEntry], polarity: str,
-                 spectra: dict[str, list[QuerySpectrum]], relations: dict) -> _MsmsStrand:
+                 spectra: dict[str, list[QuerySpectrum]], relations: dict,
+                 all_reason: str | None) -> _MsmsStrand:
     bin_width = meta['bin_width']
     unavailable: dict[str, str] = {}
     refs = {}
@@ -163,7 +182,7 @@ def _msms_strand(conn, meta: dict, entries: Sequence[XenoEntry], polarity: str,
     # 全組で回すと照合が特徴 × entry 回になるので、筋のある組だけで順位を見る。
     ranks = {key: forward_rank(conn, spectra[key[0]], refs[key[1]].inchikey)
              for key in hits | set(relations) if key[0] in spectra and key[1] in refs}
-    return _MsmsStrand(unavailable, shared, hits, ranks)
+    return _MsmsStrand(unavailable, shared, hits, ranks, all_reason)
 
 
 @dataclass(frozen=True)
@@ -233,7 +252,7 @@ def _first_evidence(found: Sequence[MassRelation], is_hit: bool,
                     forward: ForwardHit | None) -> PairEvidence:
     return PairEvidence(any(not r.shifts for r in found), bool(found), is_hit,
                         forward.rank if forward else None, forward.band if forward else None,
-                        None, False)
+                        None, False, any(not r.has_loss for r in found))
 
 
 def _judge_pairs(features: Sequence[Feature], entries: Sequence[XenoEntry], relations: dict,
@@ -319,14 +338,14 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
         head = [fid, round_floats(feature.mz), round_floats(feature.rt),
                 round_floats(feature.log2fc), round_floats(feature.q_value, keep_small=True),
                 'true' if feature.significant else 'false']
-        state = _msms_state(fid, spectra)
+        state = None if msms.all_reason else _msms_state(fid, spectra)
         counts = pattern.counts[fid] if pattern.counts else (None, None)
         reason = pattern.reason or ('detection_unknown' if None in counts else None)
         if not pairs[fid]:
             # 検出の例数は特徴の値で entry に依らない。水準の無い特徴の行にも入れる。
             blank = _DETECTED_TEST - len(head)
             rows.append(head + [None] * blank + [counts[0], counts[1], None]
-                        + [_notes(feature, state, None, reason, None,
+                        + [_notes(feature, state, msms.all_reason, reason, None,
                                   n_dropped=dropped_by_feature[fid])])
             continue
         for pair in pairs[fid]:
@@ -335,7 +354,8 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                     None if shared is None else shared.n_shared,
                     None if shared is None else ';'.join(shared.formulas),
                     pair.evidence.forward_rank, counts[0], counts[1], round_floats(pair.rho),
-                    _notes(feature, state, msms.unavailable.get(entry.entry_id), reason,
+                    _notes(feature, state, msms.all_reason or msms.unavailable.get(entry.entry_id),
+                           reason,
                            pair.parent_feature, pair.evidence.forward_band,
                            dropped[(fid, entry.entry_id)])]
             start = [pair.level, entry.entry_id, entry.role]
@@ -363,7 +383,8 @@ def _summarize(bundle: EvidenceBundle, entries: Sequence[XenoEntry],
         for pair in found:
             if pair.level in ('A', 'B'):
                 per_entry[pair.entry.entry_id][pair.level] += 1
-    states = Counter(_msms_state(f.feature_id, spectra) for f in features)
+    states = Counter() if msms.all_reason else Counter(
+        _msms_state(f.feature_id, spectra) for f in features)
     return {
         'calibration': dict(CALIBRATION),
         'intensities_stage': manifest.get('intensities_stage'),
@@ -373,10 +394,11 @@ def _summarize(bundle: EvidenceBundle, entries: Sequence[XenoEntry],
         'per_entry': per_entry,
         'unavailable': {
             'msms': msms.unavailable,
-            # links が空なら A・B は原理的に 0。「薬剤由来なし」に読ませない。
-            'msms_all': None if bundle.spectrum_links else 'no_spectrum_links',
+            # 使えないなら A・B は原理的に 0。「薬剤由来なし」に読ませない。
+            'msms_all': msms.all_reason,
             'spectrum_links_status': manifest.get('provenance', {}).get('spectrum_links_status'),
-            'n_features_without_msms': states['no_msms'] + states['empty_spectrum'],
+            'n_features_without_msms': None if msms.all_reason
+            else states['no_msms'] + states['empty_spectrum'],
             'pattern': pattern.reason,
             'detection_unavailable_reason': manifest['population'].get('detection_unavailable_reason'),
         },
@@ -446,7 +468,8 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
     conn, meta = open_index()
     index = {'bin_width': meta['bin_width'], 'built_at': meta.get('built_at')}
     try:
-        msms = _msms_strand(conn, meta, entries, polarity, spectra, relations)
+        msms = _msms_strand(conn, meta, entries, polarity, spectra, relations,
+                            _links_unavailable(bundle))
     finally:
         conn.close()
     pattern = _pattern_strand(store, analysis_id, bundle, test_side)

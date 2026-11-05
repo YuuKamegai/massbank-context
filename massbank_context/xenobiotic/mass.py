@@ -40,6 +40,11 @@ class MassRelation:
     def relation(self) -> str:
         return f"{','.join(self.shifts) or 'parent'}|{self.ion}"
 
+    @property
+    def has_loss(self) -> bool:
+        """イオン源の中の損失つきの一致か（spec §4.1。水準 C の扱いが違う。§5）。"""
+        return _BASE_ADDUCT.get(self.ion, self.ion) != self.ion
+
 
 _BAND_KEYS = {"min_mz", "max_mz", "ppm"}
 

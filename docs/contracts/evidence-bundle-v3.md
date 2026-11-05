@@ -44,6 +44,7 @@ manifest がファイルの sha256 を持つので、写しは改行を変換し
 ## dataset 経路の spectrum_links
 
 ms-data-parser の `dataset_export_evidence_bundle` は v3 でも `spectrum_links` を空で書く
-（`provenance.spectrum_links_status` が `not_provided`）。v3 の契約としては正しいが、外来の分子の走査では MS/MS の筋が
-全部 `no_msms` になり、水準 A・B が付かない。較正では同じアラインメントの `.dcl` と ID で結んだ links を足した
+（`provenance.spectrum_links_status` が `not_provided`）。v3 の契約としては正しいが、外来の分子の走査では MS/MS の筋全体が
+`unavailable`（`msms_all: no_spectrum_links`）になり、水準 A・B が付かない。`verified_alignment` 以外で links が空のときは同じ扱いで、
+`verified_alignment` で空のときだけ `no_msms` と読む（設計書 §6）。r2 までの較正では同じアラインメントの `.dcl` と ID で結んだ links を足した
 （`scripts/build_xenobiotic_calibration_bundles.py`、設計書 §10.2）。
