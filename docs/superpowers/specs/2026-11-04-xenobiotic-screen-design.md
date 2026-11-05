@@ -769,3 +769,34 @@ MTBLS6965 は脂質の run（研究室の MSP と LBM で注釈）で、代謝�
 - 規則が偽陽性を防ぐかの独立の確かめには、陽イオンで、登録した分子の参照スペクトルがあり、MS/MS が取れていて、その分子を投与していない run が要る。手元の Console の出力では、r3・r4・r5 でそれを使い切った。
 
 **r5 の後に決めないこと。** §10.12 のとおり、規則・閾値・表をこの結果で直さない。`CALIBRATION` の `status` は `revised_after_r4_failure_unvalidated` のままにする（この回で規則が確かめられたとは言えないため）。次をどうするかは、本体のセッション経由でユーザーが決める。
+
+### 10.13 独立の検証 r6（2026-11-05、事前登録。MS-DIAL で処理する前に書いた）
+
+**目的。** r5（§10.12.1）は条件を満たしたが、親との共起の規則を試す組が 0 で、規則の検証にならなかった。ユーザー（PM）の決定（2026-11-05「陽イオンのおとりを作る」）で、陽イオン・DDA・非投与の run を 1 本 MS-DIAL で処理し、r6 として 1 回だけ走らせる。
+この節の条件は処理の前にコミットし、結果の後に変えない。**不合格でも、この回の後に規則・閾値・表を直さない。**
+
+**固定するもの。** r5 と同じ（閾値の版 `xeno-thresholds-2026-11-05-r5`、`codetect_min_fraction = 0.5`、付加体の表 `xeno-adducts-3`、質量差の表 `xeno-shifts-1`、索引 `built_at` 2026-08-30T15:11:59+00:00）。
+
+**おとりの run。** MTBLS5071 pos（ユーザーの承認 2026-11-05）。ラットのアストロサイトの培養細胞（CTX TNA2）。群は無処置・アルコール・ファスジル前処理＋アルコール（各 6 皿）とプール QC 4。Thermo Q Exactive HF-X、陽イオン、DDA（MS2 の走査のフィルタに `d`。run の工程 4 で確かめた）。
+- 培養細胞なので、アムロジピン・フルオキセチン・ケタミン・ノルケタミン・キシラジンが入る経路は無い。D1・D2 とも厳しいおとりにする。
+- この run は v9 の再解析の予定で、工程 1〜4 まで済んでいる。おとりの処理は `datasets/reanalysis/MTBLS5071/xenobiotic_calibration/pos/` の下に別に置き、再解析の工程 5（`pipeline/`）とは混ぜない。おとりの処理の出力は、再解析には使わない。
+
+**MS-DIAL の処理（`pipeline_run`）。**
+- 入力: `xenobiotic_calibration/pos/input/` に、`raw/` の `POS_*.raw` 22 件のハードリンクを置く（MS-DIAL の生成物が `raw/` に出ないように）。
+- メソッド: run の承認済みの `runs/MTBLS5071/method/method_pos.txt` をそのまま使う。`library_mode: msp_only`（代謝物の run。研究室の MSP は設定ファイルから）。
+- 実験情報シート: 試料 18（群 control・alcohol・fasudil）と QC 4。`injection_order` は空（取得時刻の道具は再解析の run の記録に書くので、ここでは使わない。MS-DIAL の整列の基準はファイル名順の中央になる）。
+- 前処理は MTBLS6965 v8 と同じ（`conservative-v1`、`impute: half_min`、`min_detection_rate: 0`、ほかは `auto`）。比較は brief の主の contrast: reference `alcohol` 対 test `fasudil`（6 対 6）。
+- 処理が失敗した、または `spectrum_links_status` が `verified_alignment` でなければ、止めて報告する。
+
+**登録と走らせ方。** r5 と同じ D1（X1・X2、`received_by: test`）と D2（X3〜X7、`received_by: both`）を別々に登録し、±10 ppm（MTBLS5071 の brief の工程 5 の値が無いので、r3〜r5 のおとりと同じ）で 1 回だけ走らせる。スクリプトは `scripts/build_xenobiotic_validation_r6.py`、結果は `datasets/reanalysis/MTBLS5071/xenobiotic_calibration/validation_r6.json`。
+
+**合格の条件。**
+1. D1: A 0・B 0。
+2. D2: A 0・B 0。
+3. C は組ごとに 20 以内。
+
+**規則が試されたかの判定（合否とは別に、走らせる前に決める）。** 質量差のある一致だけで MS/MS の共有が閾値以上の組（共起を数えた組。notes に `parent_codetected` がある組）を数える。
+- 1 組以上あり、条件 1〜3 を満たせば「規則はこの run で偽陽性を防いだ」と書く。共起で B にならなかった組の数（r3 の規則なら B だった数）も書く。
+- 0 組なら、r5 と同じく「規則は試されなかった」と書き、合否にかかわらず規則が確かめられたとは言わない。
+
+**この検証の限界（処理の前に書く）。** おとりだけで、感度は確かめない。1 run・1 極性で、培養細胞は組織や血清より特徴が少ない。
