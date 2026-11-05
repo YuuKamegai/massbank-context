@@ -42,15 +42,17 @@
      "label": "N-Cyano-N',N'-dimethylguanidine",
      "min_level": "C",
      "basis": "report.md 2 節 / novel_candidates.tsv: N-Cyano-N',N'-dimethylguanidine spot 3156、[M+H]1+ -2.80 ppm、RT 8.335 分、log2FC 9.39、バンドルの m/z 113.0819"
-    },
+    }
+   ],
+   "skipped": [
     {
      "feature_id": "6126",
      "label": "6-Propyl-1,3,5-triazine-2,4-diamine",
-     "min_level": "C",
-     "basis": "report.md 2 節 / novel_candidates.tsv: 6-Propyl-1,3,5-triazine-2,4-diamine spot 6126、[M+H]1+ -3.27 ppm、RT 8.519 分、log2FC 15.61、バンドルの m/z 154.1082"
+     "basis": "report.md 2 節 / novel_candidates.tsv: 6-Propyl-1,3,5-triazine-2,4-diamine spot 6126、[M+H]1+ -3.27 ppm、RT 8.519 分、log2FC 15.61、バンドルの m/z 154.1082",
+     "reason": "クロマトのピークが無く 11 個の特徴に割れる。単一の分子でないので対照から外す（§10.9）"
     }
    ],
-   "skipped": []
+   "recorded_misses": []
   },
   {
    "accession": "ST002901",
@@ -121,14 +123,16 @@
     {
      "feature_id": "13981",
      "label": "fluoxetine",
-     "min_level": "A",
-     "basis": "規則 (2): 候補 1 件のうち mean_a+mean_b 最大。spot 13981、[M+H]+ -3.64 ppm、RT 4.108 分、m/z 310.1402、注釈の InChIKey なし（質量と MS/MS の有無だけで選んだ）"
+     "min_level": "C",
+     "basis": "規則 (2): 候補 1 件のうち mean_a+mean_b 最大。spot 13981、[M+H]+ -3.64 ppm、RT 4.108 分、m/z 310.1402、注釈の InChIKey なし（質量と MS/MS の有無だけで選んだ）",
+     "revised": "A→C: MS2 に断片が無く A に届かない。投与 16/16、C 群 0/8。IS の 3 例は未解決（§10.9）"
     },
     {
      "feature_id": "13249",
      "label": "norfluoxetine",
-     "min_level": "B",
-     "basis": "規則 (2): 候補 5 件のうち mean_a+mean_b 最大。spot 13249、[M+H]+ -2.07 ppm、RT 5.102 分、m/z 296.1251、注釈の InChIKey なし（質量と MS/MS の有無だけで選んだ）"
+     "min_level": "C",
+     "basis": "規則 (2): 候補 5 件のうち mean_a+mean_b 最大。spot 13249、[M+H]+ -2.07 ppm、RT 5.102 分、m/z 296.1251、注釈の InChIKey なし（質量と MS/MS の有無だけで選んだ）",
+     "revised": "B→C: MS2 が 25 走査ともノイズで B に届かない。296・134 の投与依存で本物とみる（§10.9）"
     },
     {
      "feature_id": "10218",
@@ -153,15 +157,18 @@
      "label": "dehydronorketamine",
      "min_level": "B",
      "basis": "report.md 2 節 / novel_candidates.tsv: Dehydronorketamine spot 8283、[M+H-NH3]1+ -2.44 ppm、RT 6.633 分、log2FC -3.78、バンドルの m/z 205.0410"
-    },
+    }
+   ],
+   "skipped": [],
+   "recorded_misses": [
     {
      "feature_id": "9187",
      "label": "2-Ethyl-2-(p-tolyl)malonamide",
      "min_level": "C",
-     "basis": "report.md 2 節 / novel_candidates.tsv: 2-Ethyl-2-(p-tolyl)malonamide spot 9187、[M+H]1+ -2.60 ppm、RT 6.733 分、log2FC 13.62、バンドルの m/z 221.1279"
+     "basis": "report.md 2 節 / novel_candidates.tsv: 2-Ethyl-2-(p-tolyl)malonamide spot 9187、[M+H]1+ -2.60 ppm、RT 6.733 分、log2FC 13.62、バンドルの m/z 221.1279",
+     "reason": "Flx の投与に依存する（投与 16/16、投与なし 0/16）が、名前の根拠も自前の MS2 も無い。合否に入れず見逃しとして記録する（§10.9）"
     }
-   ],
-   "skipped": []
+   ]
   },
   {
    "accession": "ST002901",
@@ -266,7 +273,8 @@
      "label": "dehydronorketamine",
      "reason": "検出されていない: 理論イオン（negative）±5 ppm に MS/MS のある特徴が無い"
     }
-   ]
+   ],
+   "recorded_misses": []
   },
   {
    "accession": "MTBLS9365",
@@ -308,7 +316,8 @@
    "skipped": [],
    "max_A": 0,
    "max_B": 0,
-   "max_C": 20
+   "max_C": 20,
+   "recorded_misses": []
   },
   {
    "accession": "MTBLS9365",
@@ -350,7 +359,9 @@
    "skipped": [],
    "max_A": 0,
    "max_B": 0,
-   "max_C": 20
+   "max_C": 20,
+   "recorded_misses": []
   }
- ]
+ ],
+ "revisions": "2026-11-05 r3 の前の改訂（ユーザーの承認。設計書 §10.9）。生データの確かめによるもので、走査の結果によらない: 13249 B→C、13981 A→C、9187 を recorded_misses へ、6126 を skipped へ。"
 }

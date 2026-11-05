@@ -48,6 +48,8 @@ LEVELS = ('A', 'B', 'C', 'D')
 
 SNAPSHOT_KIND = 'xenobiotic_screen'
 MAX_ROWS_LIMIT = 200
+LOW_SCORE_SOURCE = 'msdial_sml'
+LOW_SCORE_PREFIX = 'low score:'
 _FEATURE_ID = SCREEN_COLUMNS.index('feature_id')
 _LEVEL = SCREEN_COLUMNS.index('level')
 _DETECTED_TEST = SCREEN_COLUMNS.index('detected_test')
@@ -123,6 +125,12 @@ def _validated_bands(ppm, max_shifts, ppm_bands) -> list[dict]:
         return validate_ppm_bands(ppm_bands)
     except (ValueError, TypeError, AttributeError) as exc:
         raise XenobioticError(f"ppm_bands が不正: {exc}") from exc
+
+
+def _low_score_adducts(bundle: EvidenceBundle) -> frozenset[str]:
+    """付加体の記載が低得点の注釈の候補でしかない特徴。"""
+    return frozenset(c.feature_id for c in bundle.annotations
+                     if c.source == LOW_SCORE_SOURCE and c.name.startswith(LOW_SCORE_PREFIX))
 
 
 def _feature_spectra(bundle: EvidenceBundle) -> dict[str, list[QuerySpectrum]]:
@@ -305,7 +313,8 @@ def _msms_state(feature_id: str, spectra: dict[str, list[QuerySpectrum]]) -> str
 
 def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
            pattern_reason: str | None, parent_feature: str | None,
-           forward_band: str | None = None, n_dropped: int = 0) -> str:
+           forward_band: str | None = None, n_dropped: int = 0,
+           low_score: bool = False) -> str:
     notes = []
     if feature.mz is None:
         notes.append('no_mz')
@@ -321,6 +330,8 @@ def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
         notes.append(f'forward_band:{forward_band}')
     if n_dropped:
         notes.append(f'adduct_conflict_dropped:{n_dropped}')
+    if low_score and feature.mz is not None and feature.adduct:
+        notes.append('adduct_low_score')
     if feature.mz is not None and feature.adduct and not adduct_recognized(feature.adduct):
         notes.append('adduct_unrecognized')
     return ';'.join(notes)
@@ -328,7 +339,8 @@ def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
 
 def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                 spectra: dict[str, list[QuerySpectrum]], msms: _MsmsStrand,
-                pattern: _PatternStrand, dropped: Counter) -> list[list]:
+                pattern: _PatternStrand, dropped: Counter,
+                low_score: frozenset[str]) -> list[list]:
     rows: list[list] = []
     dropped_by_feature: Counter = Counter()
     for (fid, _entry_id), n in dropped.items():
@@ -346,7 +358,8 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
             blank = _DETECTED_TEST - len(head)
             rows.append(head + [None] * blank + [counts[0], counts[1], None]
                         + [_notes(feature, state, msms.all_reason, reason, None,
-                                  n_dropped=dropped_by_feature[fid])])
+                                  n_dropped=dropped_by_feature[fid],
+                                  low_score=fid in low_score)])
             continue
         for pair in pairs[fid]:
             entry, shared = pair.entry, pair.shared
@@ -357,7 +370,7 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                     _notes(feature, state, msms.all_reason or msms.unavailable.get(entry.entry_id),
                            reason,
                            pair.parent_feature, pair.evidence.forward_band,
-                           dropped[(fid, entry.entry_id)])]
+                           dropped[(fid, entry.entry_id)], fid in low_score)]
             start = [pair.level, entry.entry_id, entry.role]
             for relation in pair.relations:
                 rows.append(head + start + [relation.relation, round_floats(relation.theoretical_mz),
@@ -403,7 +416,8 @@ def _summarize(bundle: EvidenceBundle, entries: Sequence[XenoEntry],
             'detection_unavailable_reason': manifest['population'].get('detection_unavailable_reason'),
         },
         'counts': {key: mass_counts[key]
-                   for key in ('adduct_conflict_dropped', 'adduct_unrecognized', 'no_mz')}
+                   for key in ('adduct_conflict_dropped', 'adduct_low_score_ignored',
+                               'adduct_unrecognized', 'no_mz')}
         | {key: states[key] for key in ('no_msms', 'empty_spectrum')},
         'n_rows': n_rows,
     }
@@ -463,8 +477,9 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
 
     features = bundle.features
     spectra = _feature_spectra(bundle)
+    low_score = _low_score_adducts(bundle)
     relations, mass_counts, dropped = find_mass_relations(features, entries, polarity, ppm, bands,
-                                                          max_shifts)
+                                                          max_shifts, low_score)
     conn, meta = open_index()
     index = {'bin_width': meta['bin_width'], 'built_at': meta.get('built_at')}
     try:
@@ -474,7 +489,7 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
         conn.close()
     pattern = _pattern_strand(store, analysis_id, bundle, test_side)
     pairs = _judge_pairs(features, entries, relations, msms, pattern)
-    rows = _build_rows(features, pairs, spectra, msms, pattern, dropped)
+    rows = _build_rows(features, pairs, spectra, msms, pattern, dropped, low_score)
     summary = _summarize(bundle, entries, pairs, spectra, msms, pattern, mass_counts, len(rows))
 
     if output_path is None:

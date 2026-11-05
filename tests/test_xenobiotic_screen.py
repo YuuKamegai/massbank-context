@@ -8,6 +8,7 @@ import pytest
 
 import xenobiotic_helpers
 from massbank_context.core import config
+from massbank_context.core.evidence_models import Candidate
 from massbank_context.xenobiotic import msms, screen
 from massbank_context.xenobiotic.mass import MassRelation
 from massbank_context.xenobiotic.registry import XenobioticError, register
@@ -488,6 +489,37 @@ def test_unrecognized_adduct_is_noted(registered, monkeypatch):
     assert 'adduct_unrecognized' in _row(rows, 'endo', '')['notes']
     assert 'adduct_unrecognized' not in _row(rows, 'k_parent', 'X1')['notes']
     assert summary['counts']['adduct_unrecognized'] == 1
+
+
+def _with_adduct_annotation(bundle, source, name):
+    features = tuple(replace(f, adduct='[M+Na]1+') if f.feature_id == 'k_parent' else f
+                     for f in bundle.features)
+    return replace(bundle, features=features, annotations=bundle.annotations + (
+        Candidate('c', 'k_parent', source, 'c:0', name=name),))
+
+
+def test_low_score_annotation_does_not_drop_mass_relations(registered, monkeypatch):
+    store, aid = registered
+    _alter_bundle(monkeypatch, store,
+                  lambda b: _with_adduct_annotation(b, 'msdial_sml', 'low score: something'))
+    summary = run_screen(store, aid, test_group='Drug', ppm=5)
+    row = _row(_read_tsv(summary['output_path']), 'k_parent', 'X1')
+    assert row['relation'] == 'parent|[M+H]+' and 'adduct_low_score' in row['notes']
+    assert summary['counts']['adduct_low_score_ignored'] == 1
+
+
+@pytest.mark.parametrize('source, name', [
+    ('msdial_sml', 'something'),              # 低得点でない注釈の付加体は従来どおり比べる
+    ('msdial_annotation', 'low score: x'),    # 印を読むのは msdial_sml だけ
+])
+def test_other_annotations_keep_the_adduct_comparison(registered, monkeypatch, source, name):
+    store, aid = registered
+    _alter_bundle(monkeypatch, store, lambda b: _with_adduct_annotation(b, source, name))
+    summary = run_screen(store, aid, test_group='Drug', ppm=5)
+    assert summary['counts']['adduct_low_score_ignored'] == 0
+    relations = [r['relation'] for r in _read_tsv(summary['output_path'])
+                 if r['feature_id'] == 'k_parent' and r['entry_id'] == 'X1']
+    assert 'parent|[M+H]+' not in relations
 
 
 def test_parent_candidate_excludes_the_feature_itself(tmp_path, monkeypatch):

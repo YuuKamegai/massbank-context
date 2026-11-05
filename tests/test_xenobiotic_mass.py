@@ -130,6 +130,25 @@ def test_dropped_relations_are_counted_per_pair():
     assert dropped == {('f', 'X0'): 1, ('f', 'X1'): 1} and counts['adduct_conflict_dropped'] == 2
 
 
+def test_low_score_adduct_is_not_compared_and_is_counted():
+    entries = [SimpleNamespace(entry_id='X1', composition=parse_formula('C13H16ClNO'))]
+    feature = _feature('f', 238.0990, adduct='[M+Na]1+')
+    relations, counts, dropped = find_mass_relations(
+        [feature], entries, 'positive', 10.0, [], 0, frozenset({'f'}))
+    assert relations[('f', 'X1')][0].ion == '[M+H]+'
+    assert counts['adduct_low_score_ignored'] == 1
+    assert counts['adduct_conflict_dropped'] == 0 and not dropped
+
+
+def test_adduct_of_other_features_is_still_compared():
+    entries = [SimpleNamespace(entry_id='X1', composition=parse_formula('C13H16ClNO'))]
+    relations, counts, _ = find_mass_relations(
+        [_feature('f', 238.0990, adduct='[M+Na]1+')], entries, 'positive', 10.0, [], 0,
+        frozenset({'g'}))
+    assert ('f', 'X1') not in relations and counts['adduct_conflict_dropped'] == 1
+    assert counts['adduct_low_score_ignored'] == 0
+
+
 def test_ms_dial_adduct_notation_is_normalized():
     entries = [SimpleNamespace(entry_id='X1', composition=parse_formula('C13H16ClNO'))]
     dropped, counts, _ = find_mass_relations(

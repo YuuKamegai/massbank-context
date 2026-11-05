@@ -4,6 +4,7 @@
 ``SELECTION_RULE`` に書き、JSON にも写す。結果を見て変えない。
 
 期待は結果を見て変えないので、`OUTPUT` が既にあれば `--force` なしでは止める。
+r3 の前の改訂（設計書 §10.9）は JSON を直接直した。`--force` で作り直すと改訂が消える。
 
 使い方: `C:/Python314/python.exe scripts/build_xenobiotic_calibration_expectations.py [--force]`
 """

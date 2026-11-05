@@ -112,12 +112,15 @@ def find_mass_relations(
     ppm: float,
     ppm_bands: list[dict],
     max_shifts: int,
+    low_score_adducts: frozenset[str] = frozenset(),
 ) -> tuple[dict[tuple[str, str], list[MassRelation]], Counter, Counter]:
     """各 entry の理論 m/z が窓に入る特徴を探す。鍵は (feature_id, entry_id)。
 
     各リストは (質量差の数, |ppm|) 順で、1 つの (特徴, entry) に複数あれば全部残す。
     特徴に付加体の記載があり、認識できて、損失を除いた付加体同士が違えば落とす。認識できない
     記載は残して ``adduct_unrecognized`` を特徴の数で数える（``no_mz`` も特徴の数）。
+    ``low_score_adducts`` の特徴の付加体は低得点の注釈の候補で実測の判定ではないので、比べずに
+    ``adduct_low_score_ignored`` を特徴の数で数える。
     戻り値は (一致, 数, 組ごとの落とした一致の数)。組の鍵は一致と同じ。
     """
     counts: Counter = Counter()
@@ -130,6 +133,9 @@ def find_mass_relations(
             continue
         indexed.append((feature.mz, feature))
         label = _normalize_adduct(feature.adduct) if feature.adduct else None
+        if label and feature.feature_id in low_score_adducts:
+            counts["adduct_low_score_ignored"] += 1
+            label = None
         if label and label not in _BASE_ADDUCT:
             counts["adduct_unrecognized"] += 1
             label = None
