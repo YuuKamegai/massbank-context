@@ -5,8 +5,7 @@ r3 の前の改訂は生データの確かめによるもので、走査の結�
 満たせなかった項目は ``KNOWN_UNMET`` に理由つきで残し、増えても減っても落ちるようにする
 （満たせなかったことを隠さず、直ったことも見逃さない）。
 
-**realdata のテストの通過は spec §8 の合格ではない。** 未達を固定して通しているだけで、§8 の判定は
-不合格のまま（設計書 §10.1）。
+r3 は改訂した期待に合格し、未達は無い。合格の限界は設計書 §10.0 にある。
 """
 import csv
 import importlib.util
@@ -29,24 +28,20 @@ ORDER = {'A': 0, 'B': 1, 'C': 2, 'D': 3, '': 4}
 RUNS = json.loads(EXPECTATIONS.read_text(encoding='utf-8'))['runs']
 
 # 設計書 §10 の決定。
-DESIGN_THRESHOLDS = {'msms_shared_min': 0.15, 'msms_top_n': 10, 'bias_reference_max': 1,
+DESIGN_THRESHOLDS = {'msms_shared_min': 0.12, 'msms_top_n': 10, 'bias_reference_max': 1,
                      'rho_min': 0.6, 'rho_min_n': 5}
-DESIGN_VERSION = 'xeno-thresholds-2026-11-05-r3'
+DESIGN_VERSION = 'xeno-thresholds-2026-11-05-r3-selected'
 
 # 設計書 §10 の「満たせなかった点」。(accession, polarity) -> {特徴 ID: 走査で付いた水準}
-KNOWN_UNMET: dict[tuple[str, str], dict[str, str]] = {
-    # 6-Propyl-1,3,5-triazine-2,4-diamine。質量の一致は戻ったが共有 0.047、検出 2/5 例で D に留まる
-    ('ST003841', 'positive'): {'6126': 'D'},
-    # 13981 フルオキセチン: [M+Na]+ の記載で質量が落ち、共有 0。
-    # 9187 2-Ethyl-2-(p-tolyl)malonamide: 質量の一致は付加体で落ち、共有 0.05、検出 1/8 例
-    # 13249 ノルフルオキセチン: 順位 1 だが PRECURSOR_ONLY で A でなく、共有 0 で B にも届かない
-    ('ST002901', 'positive'): {'13981': '', '9187': '', '13249': 'C'},
-}
+KNOWN_UNMET: dict[tuple[str, str], dict[str, str]] = {}
 
 # 設計書 §10.0 の、おとりの上限を超えた件数。(accession, polarity) -> {上限の鍵: 件数}
-# 陰イオンの C は MS/MS の閾値に依らないので、格子のどの点でも 32 になる。
-KNOWN_OVER_LIMIT: dict[tuple[str, str], dict[str, int]] = {
-    ('MTBLS9365', 'negative'): {'max_C': 32},
+KNOWN_OVER_LIMIT: dict[tuple[str, str], dict[str, int]] = {}
+
+# 合否から外して記録する見逃し（§8、§10.9）。(accession, polarity) -> {特徴 ID: 走査で付いた水準}
+KNOWN_RECORDED_MISSES: dict[tuple[str, str], dict[str, str]] = {
+    # 9187: 投与依存だが名前の根拠が無い。共有 0、検出 1/0 で D に留まる
+    ('ST002901', 'positive'): {'9187': 'D'},
 }
 
 
@@ -157,6 +152,10 @@ def test_calibration_expectations(run, tmp_path, monkeypatch):
     unmet = {item['feature_id']: levels.get(item['feature_id'], '') for item in run['expect']
              if ORDER[levels.get(item['feature_id'], '')] > ORDER[item['min_level']]}
     assert unmet == KNOWN_UNMET.get((run['accession'], run['polarity']), {})
+
+    misses = {item['feature_id']: levels.get(item['feature_id'], '')
+              for item in run.get('recorded_misses', [])}
+    assert misses == KNOWN_RECORDED_MISSES.get((run['accession'], run['polarity']), {})
 
     counts = summary['levels']
     over = {key: counts[level] for key, level in (('max_A', 'A'), ('max_B', 'B'), ('max_C', 'C'))

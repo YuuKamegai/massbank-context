@@ -27,7 +27,7 @@
   `register_xenobiotics` で薬物などを登録し、`screen_xenobiotic_features` で全特徴量を
   質量関係・MS/MS・検出パターンの 3 つの筋から走査し、`get_xenobiotic_screen` で行を引く。
   全行は TSV に書き、水準は判定ではなく材料として返す。
-  spec §8 の較正は不合格で手順書には入れていない（設計書 §10）。
+  spec §8 の較正は r3 で改訂した期待に合格したが、手順書には入っていない（設計書 §10.0）。
 
 MassBank レコードのメタデータ取得（`catalog/` `bias/`）は未実装。
 

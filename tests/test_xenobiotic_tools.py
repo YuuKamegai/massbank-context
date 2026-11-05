@@ -39,7 +39,7 @@ def test_docstrings_describe_the_arguments():
     assert all(word in doc for word in (*ROLES, *RECEIVED_BY, 'entry_id', 'role', 'name', 'inchikey',
                                         'formula', 'parent_entry_id', 'received_by'))
     doc = screen_xenobiotic_features.__doc__
-    assert all(word in doc for word in ('min_mz', 'max_mz', 'ppm_bands', '不合格'))
+    assert all(word in doc for word in ('min_mz', 'max_mz', 'ppm_bands', '手順書'))
 
 
 def test_register_and_screen_advance_the_evidence_revision(tmp_path, monkeypatch):

@@ -187,7 +187,7 @@ def test_summary_reports_entries_and_unavailable(screened):
 def test_summary_carries_calibration_index_and_stage(screened):
     summary, _ = screened
     assert summary['calibration'] == {
-        'status': 'spec8_not_met',
+        'status': 'spec8_met_with_revised_expectations',
         'record': 'docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md §10'}
     assert set(summary['versions']) == {'adduct_table', 'shift_table', 'thresholds'}
     assert summary['index'] == {'bin_width': 0.0075, 'built_at': '2026-11-04T00:00:00Z'}

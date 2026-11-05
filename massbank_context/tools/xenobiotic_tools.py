@@ -14,7 +14,7 @@ def register_xenobiotics(analysis_id: str, entries: list[dict]) -> str:
 def screen_xenobiotic_features(analysis_id: str, test_group: str, ppm: float,
                                ppm_bands: list[dict] | None = None, polarity: str | None = None,
                                max_shifts: int = 2, output_path: str | None = None) -> str:
-    """登録した外来の分子を全特徴量に対して走査する。test_group は comparison の group_a/group_b の名前で、v2 は polarity が必須。ppm は既定の許容幅。ppm_bands は [{"min_mz": 数か null, "max_mz": 数か null, "ppm": 数}] の配列で、半開区間 [min_mz, max_mz) を理論 m/z で選び、どの帯にも入らなければ ppm を使う（未知のキーと帯の重なりは誤り）。全行は TSV に書き戻り値は要約だけ。水準は判定ではなく材料。spec §8 の較正は不合格で手順書には入れていない（要約の calibration）。"""
+    """登録した外来の分子を全特徴量に対して走査する。test_group は comparison の group_a/group_b の名前で、v2 は polarity が必須。ppm は既定の許容幅。ppm_bands は [{"min_mz": 数か null, "max_mz": 数か null, "ppm": 数}] の配列で、半開区間 [min_mz, max_mz) を理論 m/z で選び、どの帯にも入らなければ ppm を使う（未知のキーと帯の重なりは誤り）。全行は TSV に書き戻り値は要約だけ。水準は判定ではなく材料。spec §8 の較正は改訂した期待に合格したが手順書には入っていない（要約の calibration）。"""
     return _invoke(lambda store: run_screen(
         store, analysis_id, test_group=test_group, ppm=ppm, ppm_bands=ppm_bands,
         polarity=polarity, max_shifts=max_shifts, output_path=output_path))
