@@ -126,14 +126,30 @@ def test_assign_level(pair, received_by, expected):
     (PairEvidence(False, True, False, None, None, True, True, False), 'test', 'C'),
     (PairEvidence(False, True, False, None, None, None, True, False), 'test', 'C'),
     (PairEvidence(False, True, False, None, None, None, True, False), 'both', 'C'),
-    # MS/MS の共有があれば B の条件を満たす（C より強い）
-    (PairEvidence(False, True, True, None, None, True, False, False), 'test', 'B'),
+    # MS/MS の共有と親との共起があれば B の条件を満たす（C より強い）
+    (PairEvidence(False, True, True, None, None, True, False, False, True), 'test', 'B'),
     # 損失の無い一致が 1 つでもあれば従来どおり
     (PairEvidence(False, True, False, None, None, True, False, True), 'test', 'C'),
     # 質量の一致の無い MS/MS の共有は損失と関係がない
     (PairEvidence(False, False, True, None, None, True, False, False), 'test', 'C'),
 ])
 def test_loss_only_mass_needs_more_than_group_bias_for_c(pair, received_by, expected):
+    assert assign_level(pair, received_by) == expected
+
+
+@pytest.mark.parametrize('pair, received_by, expected', [
+    # 質量差のある一致だけ ＋ MS/MS の共有でも、親との共起が無ければ B にしない
+    (PairEvidence(False, True, True, None, None, None, False, True, False), 'test', 'D'),
+    (PairEvidence(False, True, True, None, None, None, False, True, None), 'test', 'D'),
+    (PairEvidence(False, True, True, None, None, True, False, True, False), 'test', 'C'),
+    (PairEvidence(False, True, True, None, None, None, True, True, False), 'both', 'C'),
+    (PairEvidence(False, True, True, None, None, None, False, True, True), 'test', 'B'),
+    (PairEvidence(False, True, True, None, None, None, False, True, True), 'both', 'B'),
+    # 本体と同じ組成の一致がある組（登録した代謝物そのものなど）には共起を求めない
+    (PairEvidence(True, True, True, 2, 'PASS', None, False, True, False), 'test', 'B'),
+    (PairEvidence(True, True, True, None, None, None, False, True, None), 'both', 'B'),
+])
+def test_shifted_only_b_needs_parent_codetection(pair, received_by, expected):
     assert assign_level(pair, received_by) == expected
 
 
@@ -187,7 +203,7 @@ def test_summary_reports_entries_and_unavailable(screened):
 def test_summary_carries_calibration_index_and_stage(screened):
     summary, _ = screened
     assert summary['calibration'] == {
-        'status': 'spec8_met_with_revised_expectations',
+        'status': 'revised_after_r4_failure_unvalidated',
         'record': 'docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md §10'}
     assert set(summary['versions']) == {'adduct_table', 'shift_table', 'thresholds'}
     assert summary['index'] == {'bin_width': 0.0075, 'built_at': '2026-11-04T00:00:00Z'}
@@ -386,6 +402,9 @@ def test_unknown_detection_is_not_counted_as_undetected(tmp_path, monkeypatch):
     assert all(r['detected_test'] == '' and r['detected_reference'] == '' for r in rows)
     assert all('pattern_unavailable:detection_unknown' in r['notes'] for r in rows)
     assert _row(rows, 'k_hnk', 'X2')['rho_parent'] == ''
+    # 検出が分からなければ共起も分からないので、質量差のある一致だけの組は B にしない
+    hnk = _row(rows, 'k_hnk', 'X1')
+    assert hnk['level'] == 'D' and 'parent_codetected' not in hnk['notes']
 
 
 @pytest.mark.parametrize('kwargs, code', [
@@ -760,3 +779,54 @@ def test_cursor_is_stale_after_reregistration(screened_store):
     run_screen(store, aid, test_group='Drug', ppm=5)
     with pytest.raises(ValueError, match='^stale_cursor'):
         get_screen_rows(store, aid, cursor=cursor)
+
+
+def test_shifted_b_reports_parent_codetection(screened):
+    _, rows = screened
+    row = _row(rows, 'k_hnk', 'X1')
+    assert row['level'] == 'B' and 'parent_codetected:6/6' in row['notes'].split(';')
+    # 本体と同じ組成の一致の組には共起を書かない
+    assert 'parent_codetected' not in _row(rows, 'k_parent', 'X1')['notes']
+
+
+def test_shifted_match_without_parent_in_its_samples_is_not_b(tmp_path, monkeypatch):
+    # 親（k_parent）は test の 6 例にだけ出る。代謝物の質量と断片を持つ特徴が reference の 4 例にだけ出る
+    orphan = ('k_orphan', 240.0786, [125.0153, 89.0386, 222.0680], (0, 4), [10] * 6)
+    _with_features(monkeypatch, orphan)
+    registered = _analysis(tmp_path, monkeypatch)
+    rows = _read_tsv(run_screen(*registered, test_group='Drug', ppm=5)['output_path'])
+    row = _row(rows, 'k_orphan', 'X1')
+    assert float(row['msms_shared_score']) >= THRESHOLDS['msms_shared_min']
+    assert row['level'] == 'D' and 'parent_codetected:0/4' in row['notes'].split(';')
+    assert _row(rows, 'k_hnk', 'X1')['level'] == 'B'
+
+
+def test_codetection_needs_more_than_half(tmp_path, monkeypatch):
+    # 親は test の 6 例。代謝物は test の 2 例と reference の 2 例 → 2/4 は過半でない
+    half = ('k_half', 240.0786, [125.0153, 89.0386, 222.0680], (2, 2), [10] * 6)
+    _with_features(monkeypatch, half)
+    registered = _analysis(tmp_path, monkeypatch)
+    rows = _read_tsv(run_screen(*registered, test_group='Drug', ppm=5)['output_path'])
+    row = _row(rows, 'k_half', 'X1')
+    assert row['level'] != 'B' and 'parent_codetected:2/4' in row['notes'].split(';')
+
+
+def test_codetection_counts_features_of_ancestor_entries():
+    # X2 の質量差のある一致は、X2 本体と、親 X1 の本体の特徴のどちらとでも共起を数える
+    from massbank_context.xenobiotic.registry import XenoEntry
+    x1 = XenoEntry('X1', 'drug', 'p', None, 'C1', {}, 1.0, None, 'test')
+    x2 = XenoEntry('X2', 'drug_metabolite', 'm', None, 'C2', {}, 2.0, 'X1', 'test')
+    sides = screen.SampleSides(test=('T1', 'T2'), reference=('R1',))
+    matrix = {'child': {'T1': (1.0, True), 'T2': (1.0, True), 'R1': (1.0, True)},
+              'p1': {'T1': (1.0, True), 'T2': (0.0, False), 'R1': (0.0, False)},
+              'm1': {'T1': (0.0, False), 'T2': (1.0, True), 'R1': (0.0, False)}}
+    pattern = screen._PatternStrand(None, sides, matrix, {})
+    entries = {'X1': x1, 'X2': x2}
+    plain = {'X1': ['p1'], 'X2': ['m1']}
+    assert screen._parent_codetection('child', x2, entries, plain, pattern) == (2, 3)
+    assert screen._parent_codetection('child', x1, entries, plain, pattern) == (1, 3)
+    # 自分は親の特徴に数えない
+    assert screen._parent_codetection('p1', x1, entries, {'X1': ['p1']}, pattern) == (0, 1)
+    assert screen._parent_codetection('child', x1, entries, {}, pattern) == (0, 3)
+    assert screen._parent_codetection('child', x1, entries, plain,
+                                      screen._PatternStrand('detection_unknown')) is None

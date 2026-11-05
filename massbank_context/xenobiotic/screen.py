@@ -66,6 +66,7 @@ class PairEvidence:
     bias: bool | None
     parent_link: bool
     mass_plain: bool = True  # 損失の無い質量の一致が 1 つでもあるか
+    parent_codetected: bool | None = None  # 親の特徴と同じ試料で出ているか（判定できなければ None）
 
 
 def assign_level(pair: PairEvidence, received_by: str) -> str | None:
@@ -76,10 +77,13 @@ def assign_level(pair: PairEvidence, received_by: str) -> str | None:
 
     損失つきの質量の一致だけの組は、群の偏りでは C にしない。r2 でおとりの C を増やしたのは
     この組だった。MS/MS の共有があれば先に B になるので、ここで効くのは親との連動だけ。
+
+    質量差のある一致だけの組は、MS/MS の共有があっても、親の特徴と同じ試料で出ていなければ
+    B にしない（spec §5 の改訂、r4 の偽陽性 4 件）。共起が判定できないときも B にしない。
     """
     if pair.mass_parent and pair.forward_rank == 1 and pair.forward_band == BAND_PASS:
         return 'A'
-    if pair.mass_any and pair.msms_hit:
+    if pair.mass_any and pair.msms_hit and (pair.mass_parent or pair.parent_codetected is True):
         return 'B'
     strand = pair.mass_any or pair.msms_hit
     pattern = pair.parent_link if received_by == 'both' else pair.bias is True or pair.parent_link
@@ -231,6 +235,7 @@ class _Pair:
     shared: SharedResult | None
     rho: float | None
     parent_feature: str | None
+    codetection: tuple[int, int] | None = None  # (k, n)。質量差のある一致だけで MS/MS の共有がある組だけ
 
 
 def _parent_link(feature_id: str, entry: XenoEntry, relations: Sequence[MassRelation],
@@ -256,6 +261,36 @@ def _parent_link(feature_id: str, entry: XenoEntry, relations: Sequence[MassRela
     return max(scored, key=lambda item: item[:2], default=None)
 
 
+def _parent_codetection(feature_id: str, entry: XenoEntry, entries_by_id: dict[str, XenoEntry],
+                        plain_features: dict[str, list[str]],
+                        pattern: _PatternStrand) -> tuple[int, int] | None:
+    """(親の特徴と同じ試料で出た数, この特徴が出た試料の数)。出方が使えなければ None。
+
+    親の特徴は、entry かその祖先（parent_entry_id をたどる）と質量差も損失も無く一致する、
+    この特徴以外の特徴（水準は問わない）。試料は test と reference の両方を数え、
+    この特徴の detected が True の試料だけを分母にする。
+    """
+    if pattern.reason is not None:
+        return None
+    lineage, seen = [], set()
+    current: XenoEntry | None = entry
+    while current is not None and current.entry_id not in seen:
+        seen.add(current.entry_id)
+        lineage.append(current.entry_id)
+        parent_id = current.parent_entry_id
+        current = entries_by_id.get(parent_id) if parent_id is not None else None
+    parents = {fid for eid in lineage for fid in plain_features.get(eid, ()) if fid != feature_id}
+    row = pattern.matrix[feature_id]
+    k = n = 0
+    for sid in pattern.sides.test + pattern.sides.reference:
+        if sid not in row or row[sid][1] is not True:
+            continue
+        n += 1
+        if any(sid in pattern.matrix[p] and pattern.matrix[p][sid][1] is True for p in parents):
+            k += 1
+    return k, n
+
+
 def _first_evidence(found: Sequence[MassRelation], is_hit: bool,
                     forward: ForwardHit | None) -> PairEvidence:
     return PairEvidence(any(not r.shifts for r in found), bool(found), is_hit,
@@ -272,10 +307,14 @@ def _judge_pairs(features: Sequence[Feature], entries: Sequence[XenoEntry], rela
     """
     first: dict[tuple[str, str], PairEvidence] = {}
     a_features: dict[str, list[str]] = {}
+    plain_features: dict[str, list[str]] = {}
+    entries_by_id = {entry.entry_id: entry for entry in entries}
     for feature in features:
         for entry in entries:
             key = (feature.feature_id, entry.entry_id)
             found = relations.get(key, [])
+            if any(not r.shifts and not r.has_loss for r in found):
+                plain_features.setdefault(entry.entry_id, []).append(feature.feature_id)
             if not found and key not in msms.hits:
                 continue
             first[key] = _first_evidence(found, key in msms.hits, msms.ranks.get(key))
@@ -295,10 +334,19 @@ def _judge_pairs(features: Sequence[Feature], entries: Sequence[XenoEntry], rela
             if pattern.reason is None:
                 bias = group_bias(pattern.counts[feature.feature_id], pattern.sides,
                                   entry.received_by, THRESHOLDS)
-            evidence = replace(first[key], bias=bias, parent_link=bool(link and link[0]))
+            codetection = codetected = None
+            base = first[key]
+            if base.mass_any and not base.mass_parent and base.msms_hit:
+                codetection = _parent_codetection(feature.feature_id, entry, entries_by_id,
+                                                  plain_features, pattern)
+                if codetection is not None:
+                    k, n = codetection
+                    codetected = n > 0 and k / n > THRESHOLDS['codetect_min_fraction']
+            evidence = replace(base, bias=bias, parent_link=bool(link and link[0]),
+                               parent_codetected=codetected)
             pairs.append(_Pair(entry, found, evidence, assign_level(evidence, entry.received_by),
                                msms.shared.get(key), link[1] if link else None,
-                               link[2] if link else None))
+                               link[2] if link else None, codetection))
         pairs.sort(key=lambda p: (LEVELS.index(p.level), p.entry.entry_id))
         result[feature.feature_id] = pairs
     return result
@@ -314,7 +362,7 @@ def _msms_state(feature_id: str, spectra: dict[str, list[QuerySpectrum]]) -> str
 def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
            pattern_reason: str | None, parent_feature: str | None,
            forward_band: str | None = None, n_dropped: int = 0,
-           low_score: bool = False) -> str:
+           low_score: bool = False, codetection: tuple[int, int] | None = None) -> str:
     notes = []
     if feature.mz is None:
         notes.append('no_mz')
@@ -328,6 +376,8 @@ def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
         notes.append(f'parent_feature:{parent_feature}')
     if forward_band:
         notes.append(f'forward_band:{forward_band}')
+    if codetection is not None:
+        notes.append(f'parent_codetected:{codetection[0]}/{codetection[1]}')
     if n_dropped:
         notes.append(f'adduct_conflict_dropped:{n_dropped}')
     if low_score and feature.mz is not None and feature.adduct:
@@ -370,7 +420,8 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                     _notes(feature, state, msms.all_reason or msms.unavailable.get(entry.entry_id),
                            reason,
                            pair.parent_feature, pair.evidence.forward_band,
-                           dropped[(fid, entry.entry_id)], fid in low_score)]
+                           dropped[(fid, entry.entry_id)], fid in low_score,
+                           pair.codetection)]
             start = [pair.level, entry.entry_id, entry.role]
             for relation in pair.relations:
                 rows.append(head + start + [relation.relation, round_floats(relation.theoretical_mz),

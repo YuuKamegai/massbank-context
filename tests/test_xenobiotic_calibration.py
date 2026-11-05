@@ -29,8 +29,8 @@ RUNS = json.loads(EXPECTATIONS.read_text(encoding='utf-8'))['runs']
 
 # 設計書 §10 の決定。
 DESIGN_THRESHOLDS = {'msms_shared_min': 0.12, 'msms_top_n': 10, 'bias_reference_max': 1,
-                     'rho_min': 0.6, 'rho_min_n': 5}
-DESIGN_VERSION = 'xeno-thresholds-2026-11-05-r3-selected'
+                     'rho_min': 0.6, 'rho_min_n': 5, 'codetect_min_fraction': 0.5}
+DESIGN_VERSION = 'xeno-thresholds-2026-11-05-r5'
 
 # 設計書 §10 の「満たせなかった点」。(accession, polarity) -> {特徴 ID: 走査で付いた水準}
 KNOWN_UNMET: dict[tuple[str, str], dict[str, str]] = {}
