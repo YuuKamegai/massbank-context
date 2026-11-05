@@ -5,7 +5,7 @@
   {
    "accession": "ST003841",
    "polarity": "positive",
-   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST003841\\xenobiotic_calibration\\pos\\bundle",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST003841\\xenobiotic_calibration\\pos\\bundle_r3",
    "test_group": "VilCre_Met",
    "ppm": 10.0,
    "entries": [
@@ -57,7 +57,7 @@
   {
    "accession": "ST002901",
    "polarity": "positive",
-   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST002901\\xenobiotic_calibration\\pos\\bundle",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST002901\\xenobiotic_calibration\\pos\\bundle_r3",
    "test_group": "CSIS_Flx",
    "ppm": 10.0,
    "entries": [
@@ -173,7 +173,7 @@
   {
    "accession": "ST002901",
    "polarity": "negative",
-   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST002901\\xenobiotic_calibration\\neg\\bundle",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\ST002901\\xenobiotic_calibration\\neg\\bundle_r3",
    "test_group": "CSIS_Flx",
    "ppm": 10.0,
    "entries": [
@@ -279,7 +279,7 @@
   {
    "accession": "MTBLS9365",
    "polarity": "positive",
-   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\MTBLS9365\\xenobiotic_calibration\\pos\\bundle",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\MTBLS9365\\xenobiotic_calibration\\pos\\bundle_r3",
    "test_group": "methionine_choline_deficient_MCD",
    "ppm": 10.0,
    "ppm_bands": [
@@ -322,7 +322,7 @@
   {
    "accession": "MTBLS9365",
    "polarity": "negative",
-   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\MTBLS9365\\xenobiotic_calibration\\neg\\bundle",
+   "bundle_dir": "C:\\Users\\yuu18\\datasets\\reanalysis\\MTBLS9365\\xenobiotic_calibration\\neg\\bundle_r3",
    "test_group": "methionine_choline_deficient_MCD",
    "ppm": 10.0,
    "ppm_bands": [

@@ -1,22 +1,24 @@
-"""外来の分子の走査の較正に使う v3 バンドルを、再解析の Console の出力から作り直す（spec §8）。
+"""外来の分子の走査の較正 r3 のバンドルを、再解析の Console の出力から作り直す（spec §8、§10.9）。
 
-読むだけ: `datasets/reanalysis/<accession>/pipeline/`、`reanalysis-study/runs/`、ms-data-parser のコード。
-書くのは `datasets/reanalysis/<accession>/xenobiotic_calibration/<pos|neg>/` の下だけ。
+読むだけ: `datasets/reanalysis/<accession>/pipeline/`、ms-data-parser のコード（main）、r2 の `bundle/`。
+書くのは `datasets/reanalysis/<accession>/xenobiotic_calibration/<pos|neg>/` の `bundle_r3/` と
+`build_record_r3.json` だけ。r2 の `bundle/`・`bundle_export/` は消さない。
 
-- `bundle_export/` は `export_dataset_evidence` の出力そのもの（spectrum_links は空）。
-- `bundle/` は、その写しに同じアラインメントの `.dcl` と spectrum_links を足したもの。
-  ms-data-parser の dataset 経路は `spectrum_links=[]` で書き、MS/MS の筋が使えない。結び方は
-  ARF 経路の `alignment_links` と同じで、ID（SMF_ID == AlignmentID == DCL の番号）で結び、
-  m/z と RT は検証だけに使う（m/z の近さでは結ばない）。
+`bundle_r3/` は `dataset_export_evidence_bundle` と同じ呼び方の出力そのもので、手で足さない。
+ツールは動作中のセッションのデータセットを読むので、同じ関数を run のデータセットで呼ぶ。
+キュレーションと `.arf2` / `.dcl` の決め方もツールと同じにする。
 
 主の比較の結果が `legacy_result_without_dataset_hash` で戻せない run は、run の TSV の頭のメタと
 結果の JSON（群の試料）の条件で計算し直し、元の結果と全特徴で一致することを確かめる。
+
+書いたあと、r2 の手で足した links と行ごとに比べ、他の表も比べて記録する。
 
 使い方: `C:/Python314/python.exe scripts/build_xenobiotic_calibration_bundles.py [--force]`
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -31,10 +33,9 @@ sys.path.insert(0, str(MS_DATA_PARSER))
 
 from metabolomix.analysis.dataset_service import compare_dataset, preprocess_dataset  # noqa: E402
 from metabolomix.analysis.evidence_export import export_dataset_evidence  # noqa: E402
-from metabolomix.arf2.reader import load_catalog  # noqa: E402
-from metabolomix.dcl.reader import deserialize_dcl  # noqa: E402
-from metabolomix.msdial.alignment_spot import precursor_agrees  # noqa: E402
+from metabolomix.curation import apply as curation_apply  # noqa: E402
 from metabolomix.pipeline import session_handoff  # noqa: E402
+from metabolomix.tools.handle_tools import _alignment_files  # noqa: E402
 
 DATASETS = Path(r'C:\Users\yuu18\datasets\reanalysis')
 
@@ -89,81 +90,55 @@ def _reproduce(ds, root: Path, legacy_id: str) -> tuple[dict, dict]:
                     'group_a': stored['a'], 'group_b': stored['b']}
 
 
-def _spectrum_links(result: dict, ds, root: Path, source_id: str) -> tuple[Path, list[dict], dict]:
-    """ARF 経路の `alignment_links` と同じ規則の結び付け。m/z・RT は検証だけに使う。"""
-    arf2 = sorted((root / 'input').glob('AlignResult-*.arf2'), key=lambda p: p.name, reverse=True)[0]
-    dcl = arf2.with_suffix('.dcl')
-    catalog = {spot['AlignmentID']: spot for spot in load_catalog(arf2)}
-    entries = deserialize_dcl(str(dcl))
-    links, statuses = [], {'ok': 0, 'no_msms': 0, 'precursor_mismatch': 0,
-                           'metadata_missing': 0, 'out_of_range': 0}
-    id_space_mismatch = 0
-    for row in result['results']:
-        fid = str(row['feature'])
-        spot = int(fid)
-        raw = catalog.get(spot, {})
-        meta = ds.feature_metadata.get(row['feature'], {})
-        if not 0 <= spot < len(entries):
-            statuses['out_of_range'] += 1
-            continue
-        # SMF_ID が AlignmentID と同じ空間であることの確かめ（mzTab の値と .arf2 の値）
-        if raw.get('MassCenter') is not None and meta.get('mz') is not None \
-                and not precursor_agrees(meta['mz'], raw['MassCenter'], meta.get('rt'), raw.get('RT')):
-            id_space_mismatch += 1
-        entry = entries[spot]
-        if raw.get('MassCenter') is None or raw.get('RT') is None:
-            status = 'metadata_missing'
-        elif not precursor_agrees(entry['precursor_mz'], raw['MassCenter'], entry['rt'], raw['RT']):
-            status = 'precursor_mismatch'
-        elif not entry['msms_spectrum']:
-            status = 'no_msms'
-        else:
-            status = 'ok'
-            links.append({'feature_id': fid, 'spectrum_file': dcl.name,
-                          'spectrum_id': f'{dcl.stem}:{spot}', 'source_analysis_id': source_id,
-                          'mapping_evidence': 'same-alignment-stem; SMF_ID == AlignmentID == DCL index; '
-                                              'precursor/RT verified'})
-        statuses[status] += 1
-    if id_space_mismatch:
-        raise SystemExit(f'{root.name}: SMF_ID と AlignmentID が {id_space_mismatch} 件食い違う')
-    return dcl, links, statuses
+def _curation(ds) -> dict | None:
+    """`dataset_export_evidence_bundle` の既定（apply_curation=True）と同じ判定。"""
+    arf2 = next(filter(None, (curation_apply.arf2_for_mztab(p) for p in ds.source_files)), None)
+    if arf2 is None:
+        return None
+    mapped = (getattr(ds, 'feature_qc', None) or {}).get('source') == 'arf'
+    return {'state': 'applied' if mapped else 'unmapped', 'flag_set': curation_apply.flags_for_arf2(arf2)}
 
 
-def _add_links(export_dir: Path, bundle_dir: Path, dcl: Path, links: list[dict], statuses: dict):
-    """`bundle_export` の写しに `.dcl` と spectrum_links を足す。他の表は変えない。"""
-    shutil.copytree(export_dir, bundle_dir)
-    table = bundle_dir / 'spectrum_links.tsv'
-    columns = table.read_text(encoding='utf-8').splitlines()[0].split('\t')
-    lines = ['\t'.join(columns)] + ['\t'.join(link[c] for c in columns) for link in links]
-    table.write_bytes(('\n'.join(lines) + '\n').encode('utf-8'))
-    shutil.copyfile(dcl, bundle_dir / dcl.name)
+def _rows(path: Path) -> list[dict]:
+    with open(path, encoding='utf-8-sig', newline='') as stream:
+        return list(csv.DictReader(stream, delimiter='\t'))
 
-    manifest_path = bundle_dir / 'manifest.json'
-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    for item in manifest['files']:
-        if item['role'] == 'spectrum_links':
-            item['sha256'] = hashlib.sha256(table.read_bytes()).hexdigest()
-    manifest['files'].append({'role': 'spectra', 'path': dcl.name,
-                              'sha256': hashlib.sha256((bundle_dir / dcl.name).read_bytes()).hexdigest()})
-    manifest['provenance']['spectrum_links_status'] = 'verified_alignment'
-    manifest['provenance']['msms_link_status_counts'] = statuses
-    manifest['provenance']['spectrum_links_added_by'] = (
-        'massbank-context scripts/build_xenobiotic_calibration_bundles.py')
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True,
-                                        separators=(',', ':')) + '\n', encoding='utf-8')
+
+def _digest(rows: list[dict], skip: tuple[str, ...] = ()) -> str:
+    text = json.dumps([{k: v for k, v in row.items() if k not in skip} for row in rows],
+                      sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def compare_with_r2(new: Path, old: Path) -> dict:
+    """r2 の手で足したバンドルとの違い。links は source_analysis_id と根拠の文を除いて比べる。"""
+    record = {}
+    skip = ('source_analysis_id', 'mapping_evidence')
+    links_new, links_old = _rows(new / 'spectrum_links.tsv'), _rows(old / 'spectrum_links.tsv')
+    key = lambda row: (row['feature_id'], row['spectrum_file'], row['spectrum_id'])  # noqa: E731
+    set_new, set_old = {key(r) for r in links_new}, {key(r) for r in links_old}
+    record['links'] = {'n_r3': len(links_new), 'n_r2': len(links_old),
+                       'only_r3': len(set_new - set_old), 'only_r2': len(set_old - set_new),
+                       'same': set_new == set_old and _digest(links_new, skip) == _digest(links_old, skip),
+                       'mapping_evidence_r3': sorted({r['mapping_evidence'] for r in links_new})[:3]}
+    for name in ('features', 'samples', 'intensities', 'annotations'):
+        left, right = _rows(new / f'{name}.tsv'), _rows(old / f'{name}.tsv')
+        record[name] = {'n_r3': len(left), 'n_r2': len(right), 'same': _digest(left) == _digest(right)}
+    dcl_new, dcl_old = sorted(new.glob('*.dcl')), sorted(old.glob('*.dcl'))
+    record['dcl_same'] = (len(dcl_new) == len(dcl_old) == 1 and dcl_new[0].name == dcl_old[0].name
+                          and dcl_new[0].read_bytes() == dcl_old[0].read_bytes())
+    return record
 
 
 def build(run: dict, force: bool) -> dict:
     accession, pol = run['accession'], run['pol']
     root = next((DATASETS / accession / 'pipeline' / pol).glob('pipeline_*'))
     out = DATASETS / accession / 'xenobiotic_calibration' / pol
-    export_dir, bundle_dir = out / 'bundle_export', out / 'bundle'
+    bundle_dir = out / 'bundle_r3'
     if force:
-        for directory in (export_dir, bundle_dir):
-            shutil.rmtree(directory, ignore_errors=True)
-    elif export_dir.exists() or bundle_dir.exists():
-        raise SystemExit(f'{out} に既にバンドルがある（作り直すなら --force）')
-    out.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(bundle_dir, ignore_errors=True)
+    elif bundle_dir.exists():
+        raise SystemExit(f'{bundle_dir} が既にある（作り直すなら --force）')
 
     ds = session_handoff.load_run_dataset(root)
     record = {'accession': accession, 'pol': pol, 'pipeline': root.name,
@@ -175,24 +150,34 @@ def build(run: dict, force: bool) -> dict:
     else:
         result, record['result_from'] = _reproduce(ds, root, run['legacy_result'])
 
-    summary = export_dataset_evidence(ds, result, export_dir, polarity=run['polarity'])
-    manifest = json.loads((export_dir / 'manifest.json').read_text(encoding='utf-8'))
-    dcl, links, statuses = _spectrum_links(result, ds, root, manifest['source_analysis_id'])
-    _add_links(export_dir, bundle_dir, dcl, links, statuses)
+    curation = _curation(ds)
+    arf2, dcl = _alignment_files(ds, None, 'pipeline_path', str(root))  # dataset_handle_open と同じ
+    summary = export_dataset_evidence(ds, result, bundle_dir, curation=curation,
+                                      polarity=run['polarity'], arf2_path=arf2, dcl_path=dcl)
+    manifest = json.loads((bundle_dir / 'manifest.json').read_text(encoding='utf-8'))
+    provenance = manifest['provenance']
     record.update(n_features=summary['n_features'], n_samples=summary['n_samples'],
                   n_intensity_rows=summary['n_intensity_rows'],
                   intensities_stage=summary['intensities_stage'],
                   detection_unavailable_reason=manifest['population']['detection_unavailable_reason'],
-                  n_links=len(links), link_statuses=statuses, dcl=dcl.name)
-    (out / 'build_record.json').write_text(
+                  curation_state=(curation or {}).get('state'),
+                  arf2=str(arf2), dcl=str(dcl),
+                  spectrum_links_status=provenance.get('spectrum_links_status'),
+                  spectrum_links_reason=provenance.get('spectrum_links_reason'),
+                  msms_link_status_counts=provenance.get('msms_link_status_counts'),
+                  id_space_check={k: v for k, v in (provenance.get('id_space_check') or {}).items()
+                                  if k != 'examples'},
+                  compared_with_r2=compare_with_r2(bundle_dir, out / 'bundle'))
+    (out / 'build_record_r3.json').write_text(
         json.dumps(record, ensure_ascii=False, indent=1) + '\n', encoding='utf-8')
     return record
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--force', action='store_true', help='既存のバンドルを作り直す')
+    parser.add_argument('--force', action='store_true', help='既存の bundle_r3 を作り直す')
     args = parser.parse_args()
+    csv.field_size_limit(10 ** 8)
     for run in RUNS:
         print(json.dumps(build(run, args.force), ensure_ascii=False), flush=True)
 

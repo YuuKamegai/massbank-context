@@ -1,6 +1,7 @@
 """期待の JSON の各 run を、`msms_shared_min` × `msms_top_n` の格子で走らせて結果を書く（spec §8）。
 
-書くのは `--output`（既定は標準出力だけ）と、run の `xenobiotic_calibration/artifacts/` の下だけ。
+書くのは `--output`（既定は標準出力だけ）と、run の `xenobiotic_calibration/` の `artifacts_r3/` と
+`<pos|neg>/screen_r3.tsv`（`--flat-ppm` は `screen_flat_r3.tsv`）だけ。r2 の成果物は上書きしない。
 索引は `MASSBANK_CONTEXT_INDEX` のものを読み取り専用で開く。
 
 使い方:
@@ -52,7 +53,7 @@ def feature_levels(tsv_path: str) -> dict[str, str]:
 def prepare(run: dict) -> str:
     """artifacts を空から作り直して読み込み・登録する。analysis_id を返す。"""
     bundle = Path(run['bundle_dir'])
-    config.ARTIFACTS_PATH = bundle.parent.parent / 'artifacts' / bundle.parent.name
+    config.ARTIFACTS_PATH = bundle.parent.parent / 'artifacts_r3' / bundle.parent.name
     shutil.rmtree(config.ARTIFACTS_PATH, ignore_errors=True)
     loaded = json.loads(load_evidence_bundle(str(bundle / 'manifest.json')))
     if 'error' in loaded:
@@ -83,7 +84,9 @@ def judge(run: dict, levels: dict[str, str]) -> dict:
         if key in run and counts[level] > run[key]:
             failures.append({'limit': key, 'allowed': run[key], 'count': counts[level]})
     return {'counts': dict(counts), 'failures': failures,
-            'expected': {item['label']: levels.get(item['feature_id'], '') for item in run['expect']}}
+            'expected': {item['label']: levels.get(item['feature_id'], '') for item in run['expect']},
+            'recorded_misses': {item['feature_id']: levels.get(item['feature_id'], '')
+                                for item in run.get('recorded_misses', [])}}
 
 
 def apply_point(shared: float, top_n: int) -> None:
@@ -149,10 +152,10 @@ def main():
                           'points': [[*key, *value] for key, value in sorted(points.items())]}))
         return
     runs = json.loads(EXPECTATIONS.read_text(encoding='utf-8'))['runs']
-    tsv_name = 'screen.tsv'
+    tsv_name = 'screen_r3.tsv'
     if args.flat_ppm is not None:
         runs = [{**run, 'ppm': args.flat_ppm, 'ppm_bands': None} for run in runs if run.get('ppm_bands')]
-        tsv_name = 'screen_flat.tsv'
+        tsv_name = 'screen_flat_r3.tsv'
     print('index', config.INDEX_PATH, flush=True)
     results = []
     for run in runs:
