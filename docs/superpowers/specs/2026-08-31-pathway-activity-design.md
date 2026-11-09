@@ -106,6 +106,7 @@ ms-data-parser の `lipidmix/arf/tools.py` の `_annotate_with_names` が既に
 一方 `.arf2` は **MS/MS 取得フラグを持たない**（`arf2_annotate_identities` 自身が
 「`has_msms=False`・バンドは `UNKNOWN`」と明記している）。`verify_peak_annotation` は
 `.pai2` の**サンプル別ピーク**に対する検証であり、アライメント・スポット単位ではない。
+（この 2 ツールは 2026-11 の構成見直しで ms-data-parser から消えた。ここは当時の判断の理由として残す。）
 スポット ↔ サンプルピークの対応付けは別実装を要するため、**今回は MS/MS の印を契約に載せない**。
 `.mzTab` へ移れば `opt_global_ms2_presence` / `opt_global_spectrum_matched` で自然に埋まる（§3.4）。
 
@@ -163,7 +164,8 @@ tools/       MCP 公開層                                        （既存）
 
 ```
 [ms-data-parser]  .arf（定量・群） + .arf2（InChIKey・Ontology）
-      │  arf_export_differential   ← .arf ↔ .arf2 の結合はここ
+      │  load_dataset → dataset_compare → dataset_export_differential
+      │                            ← .arf ↔ .arf2 の結合はここ
       ▼
   differential.tsv                 ← 両サーバが知る唯一の契約
       │  ファイルパスを渡す
@@ -180,8 +182,17 @@ tools/       MCP 公開層                                        （既存）
 
 ### 6.1 export 契約（`differential.tsv`）
 
-**新ツール**: ms-data-parser の `arf_export_differential(group_a, group_b, output_path)`。
-`arf_preprocess` → `arf_differential` の後に呼ぶ。
+**書き出すツール**: ms-data-parser の `dataset_export_differential(output_path, result_id, contrast_id)`。
+`load_dataset` → （`dataset_preprocess`）→ `dataset_compare` の後に呼ぶ。
+
+> **2026-11 の改名**: ms-data-parser の構成見直し（main 4a4eee3、91 → 53 ツール）で、当初の
+> `arf_export_differential(group_a, group_b, output_path)`（`arf_preprocess` → `arf_differential` の後に呼んだ）は消え、
+> 書き出しは `dataset_export_differential` だけになった。列定義と `contract_version = 1` は変わっていない。
+> 統計エンジンの結果では、`msi_note` の後ろにメタ行が 6 行足される（`test` / `verdict_q_threshold` / `unit` /
+> `mean_definition` / `matrix_id` / `significant_rule` で始まる行。`export_contract.stats_meta_lines`）。
+> `parse_differential` は知らないキーを読み飛ばすので、読みは変えていない（`tests/test_contract.py` が固定）。
+> 意味の変化: 15 列目 `significant` は q・|log2fc| に加え `verdict == "changed"` のときだけ真。p / q は既定で moderated t。
+> `mean_a` / `mean_b` は単位（被験者）ごとの平均で、`n_a` / `n_b` は注入の数のまま（単位の数は `n_units_a` / `n_units_b`）。
 
 1 ファイルで完結させる。`#` 始まりのメタ行に来歴を置き、その後に TSV 本体を置く。
 
@@ -230,7 +241,7 @@ volcano の `up` / `down` ラベルは符号が直れば意味が正しくなる
 **(d) 兄弟 `.arf2` が無ければ export は失敗させる。**
 InChIKey 空欄の行を黙って出すと、下流で「パスウェイが無い化合物」と区別が付かなくなる。
 
-`msi_level` は `.arf2` 由来の注釈確度（`arf2_annotate_identities` の MSI クラス上限）であり、
+`msi_level` は `.arf2` 由来の注釈確度（当時の `arf2_annotate_identities` の MSI クラス上限。このツールは 2026-11 に消えた）であり、
 **MS/MS の有無ではない**。契約のコメント行にその旨を明記する（§3.5）。
 
 ### 6.2 パスウェイキャッシュ
@@ -362,7 +373,7 @@ ms-data-parser に 1 本追加する。
 
 | ツール | 返すもの |
 |---|---|
-| `arf_export_differential(group_a, group_b, output_path)` | 書き出したパス・行数・`n_with_inchikey`・`n_unannotated`・符号の向き |
+| `arf_export_differential(group_a, group_b, output_path)`（2026-11 に消え、今は `dataset_export_differential`。§6.1） | 書き出したパス・行数・`n_with_inchikey`・`n_unannotated`・符号の向き |
 
 ---
 

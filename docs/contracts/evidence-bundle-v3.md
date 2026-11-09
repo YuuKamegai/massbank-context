@@ -41,7 +41,28 @@ manifest がファイルの sha256 を持つので、写しは改行を変換し
 
 `intensities_stage` の位置は見本でも manifest の最上位で、この文書と一致する。
 
+## 統計エンジンの結果のバンドル（ms-data-parser 2026-11 の構成見直し以降）
+
+ms-data-parser main 4a4eee3 から、`dataset_export_evidence_bundle` が書くのは統計エンジン（`dataset_compare`）の結果だけになった
+（旧 `arf_export_evidence_bundle` は無い）。契約の版は 3 のままで、massbank-context の読み取りは変えていない。
+manifest の**値の意味**は次のように変わった（見本は 4a4eee3 の写しに更新済み）。
+
+- `comparison.method` は実際の検定名（既定 `moderated_t`。以前は常に `Welch`）。massbank-context はこの値を見ない。
+- `comparison` に `statistics`（検定・CI 水準・判定規則・BH の母集団・比較の単位）・`contrast_id`・`matrix_id`・`rule_hash`・
+  `effect_size_definition`・`mean_definition` が増えた（未知の欄として素通しで読む）。完全交絡を越えた比較なら `unadjusted_confounded: true`。
+- features の `significant` は q・|log2fc| の閾値に加え `verdict == "changed"` のときだけ真（`inconclusive` は有意にしない）。
+- `mean_a` / `mean_b` は単位（被験者）ごとの前処理後の線形値の算術平均。`n_a` / `n_b` は注入の数のまま。
+- `population.preprocessing_report` は **null**、`derivation_status` は `not_available`、`n_features_before` は null。
+  そのため `get_comparison_evidence` の `population_derivation.caveats`（前処理の注意。例: プール QC の層別）は**常に空**になり、
+  同じ所の `derivation_status` が `not_available` になる。「注意が無い」ではなく「上流が渡していない」。
+  前処理の設定は `comparison.preprocess`（行列の設定）にある。
+- `population.exclusions` は `{stage: excluded_samples | excluded_features, removed, names, n_more}` の 2 行。
+- `intensities_stage` は常に `pre_imputation`（結果が読んだ行列の正規化後・log2 前の値。エンジンは補完しない）。
+
 ## dataset 経路の spectrum_links
+
+ms-data-parser 8631538（2026-11-05）からは、同じアラインメントの `.arf2` / `.dcl` が見つかれば `dataset_export_evidence_bundle` が
+`spectrum_links` を書き、見つからなければ空で `provenance.spectrum_links_reason` に理由を書く。以下はそれ以前の出力についての記録。
 
 ms-data-parser の `dataset_export_evidence_bundle` は v3 でも `spectrum_links` を空で書く
 （`provenance.spectrum_links_status` が `not_provided`）。v3 の契約としては正しいが、外来の分子の走査では MS/MS の筋全体が

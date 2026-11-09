@@ -32,6 +32,38 @@ def test_parses_meta_and_rows():
     assert result.rows[1]["significant"] is False
 
 
+# ms-data-parser の統計エンジン（dataset_compare）の結果を dataset_export_differential が書くと、
+# msi_note の後ろに足される 6 行（export_contract.stats_meta_lines。契約の版は 1 のまま）。
+# 値は ms-data-parser main 4a4eee3 の build_meta + stats_meta_lines の出力の形をそのまま写した。
+STATS_META_LINES = (
+    "# msi_level_note = from mzTab-M\n"
+    "# test = moderated_t\teffect_size_definition = log2_mean_difference\tci_level = 0.95\n"
+    "# verdict_q_threshold = 0.05\tequivalence_fc = 1.2\tbh_population = matrix\tbh_n = 10"
+    "\tq_interpretation = discovery_fdr\n"
+    "# unit = subject\tn_units_a = 4\tn_units_b = 5\n"
+    "# mean_definition = linear arithmetic mean over units after preprocessing\n"
+    "# matrix_id = mx_51f8258026b883d1\trule_hash = 7309dc29\tcontrast_id = gf_HFD_vs_gf_AIN\n"
+    "# significant_rule = q<=q_threshold & |log2fc|>=log2fc_threshold & verdict=changed\n"
+)
+
+
+def test_stats_engine_meta_lines_do_not_disturb_contract():
+    """統計エンジンのメタ行が足されても、既存のメタ・行の読みは変わらず、新しいキーは素のまま残る。"""
+    marker = "# n_features_total = 10\tn_with_inchikey = 2\tn_unannotated = 8\n"
+    text = GOOD.replace(marker, marker + STATS_META_LINES)
+    result = parse_differential(text)
+    base = parse_differential(GOOD)
+    assert result.rows == base.rows
+    assert {k: result.meta[k] for k in base.meta} == base.meta
+    # n_a / n_b は注入の数のまま。比較の単位の数は別のキー
+    assert result.integer_meta("n_a") == 5
+    assert result.meta["n_units_a"] == "4"
+    assert result.meta["test"] == "moderated_t"
+    # 値の中の `<=` `>=` `=` で key が切れない（先頭の `=` だけで分ける）
+    assert result.meta["significant_rule"] == (
+        "q<=q_threshold & |log2fc|>=log2fc_threshold & verdict=changed")
+
+
 def test_rejects_unknown_contract_version():
     """未対応のバージョンを黙って解釈しない。"""
     text = GOOD.replace("contract_version = 1", "contract_version = 99")

@@ -37,7 +37,7 @@ _ACTIVITY_COLUMNS = [
 
 
 def load_differential(path: str) -> str:
-    """ms-data-parser が書き出した差次的結果を読み込む（spec §6.1）。
+    """ms-data-parser の dataset_export_differential が書き出した差次的結果を読み込む（spec §6.1）。
 
     行そのものはセッションに保持し、payload には件数と来歴だけを返す。
     n_unannotated は「注釈が付かず書き出されなかった行」であり、
@@ -47,7 +47,7 @@ def load_differential(path: str) -> str:
     if not file_path.is_file():
         return contract_mismatch(
             reason=f"ファイルが見つかりません: {path}",
-            expected="ms-data-parser の arf_export_differential が書き出した TSV",
+            expected="ms-data-parser の dataset_export_differential が書き出した TSV",
             path=path,
         )
     try:
@@ -208,8 +208,9 @@ def _collapse_by_inchikey(rows: list[dict]) -> dict[str, dict]:
     |log2fc| だけで選ぶと、有意な行が非有意な行に置き換わり得る
     （例: +1.2/significant と -3.0/非 significant なら後者が勝つ）。
     そうなると n_significant が減り、Fisher の k と n が動いて濃縮の p 値まで
-    変わる。significant は上流 ms-data-parser の閾値による判定であり、
-    こちら側で取り消してはならない（spec §7.2）。
+    変わる。significant は上流 ms-data-parser の判定であり（q・|log2fc| の閾値に加え、
+    統計エンジン `dataset_compare` の結果は `verdict == "changed"` のときだけ真。
+    メタ行 `significant_rule`）、こちら側で取り消してはならない（spec §7.2）。
     """
     def _rank(row: dict) -> tuple[bool, float]:
         return (bool(row["significant"]), abs(row["log2fc"] or 0.0))
