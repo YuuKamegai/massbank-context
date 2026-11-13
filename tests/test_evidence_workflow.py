@@ -32,10 +32,12 @@ def test_public_workflow_with_spectra_and_rdf(tmp_path, conn):
             received.append(query)
             bindings = []
             for key in sorted(set(re.findall(r'"([A-Z]{14}-[A-Z]{10}-[A-Z])"', query))):
+                # URI は実際の PubChem RDF の形にする。生物種の末尾は "TAXID10090" で、
+                # "http://example.org/10090" のような偽の形だと背景の "10090" との食い違いが隠れる。
                 bindings.append(dict(value_inchikey={'value':key},
-                                     pathway={'value':'http://example.org/PW1'},
+                                     pathway={'value':'http://rdf.ncbi.nlm.nih.gov/pubchem/pathway/PWID1'},
                                      pathway_label={'value':'Synthetic pathway'},
-                                     pathway_organism={'value':'http://example.org/10090'}))
+                                     pathway_organism={'value':'http://rdf.ncbi.nlm.nih.gov/pubchem/taxonomy/TAXID10090'}))
             raw = json.dumps({'results': {'bindings': bindings}}).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/sparql-results+json')
@@ -85,6 +87,9 @@ def test_public_workflow_with_spectra_and_rdf(tmp_path, conn):
                 assert evidence
                 assert result['hypotheses'][0]['claim'] is None
                 assert result['pathways']['n_features_total'] == 8
+                # 母集団に残るのは KEY_A の 1 化合物（f1・f2）で、マウスの PWID1 が付く。
+                assert result['pathways']['n_with_species_pathways'] == 1, result['pathways']
+                assert [r['pathway_id'] for r in result['pathways']['rows']] == ['PWID1']
                 candidates = read_tsv(result['facts']['candidates'])
                 row = evidence[0]
                 claim = dict(claim_id='c1', feature_ids=[row['feature_id']],

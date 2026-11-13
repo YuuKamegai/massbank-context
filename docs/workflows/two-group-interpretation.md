@@ -3,6 +3,7 @@
 1. 研究者との会話から生物種・組織・処置・群の意味・測定条件・問いを整理する。
    値のない項目はnull。研究者に内容を示して確認し、確認済み背景を登録する。
    speciesのvalueは、経路集計する場合は `{"label":"mouse","taxid":"10090"}` の形を使う。
+   taxidと`draft_comparison_findings`のorganismは、`10090`と`TAXID10090`（PubChemの書式）のどちらでもよい。
 2. ms-data-parserで前処理・2群比較を実行し、新しいevidence bundleを出力する。
    正のlog2fcはgroup_bが高い。比較方向と群の意味を確認する。
 3. `load_evidence_bundle`で読み、analysis_idと全件数を確認する。

@@ -77,7 +77,7 @@ def get_comparison_evidence(analysis_id: str, feature_ids: list[str] | None = No
 
 def draft_comparison_findings(analysis_id: str, organism: str = '',
                               include_pathways: bool = False) -> str:
-    """解釈用の事実と空の仮説を返す。経路集計は任意。活性断定をせず根拠IDを引用して会話側で解釈する。"""
+    """解釈用の事実と空の仮説を返す。経路集計は任意で、organismはNCBIのtaxid（10090でもTAXID10090でもよい）。活性断定をせず根拠IDを引用して会話側で解釈する。"""
     def operation(store):
         result = build_comparison_findings(store, analysis_id, organism, include_pathways)
         return dict(result, facts=tabulate(result['facts']))

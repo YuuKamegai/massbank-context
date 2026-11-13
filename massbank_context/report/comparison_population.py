@@ -67,6 +67,17 @@ def build_population(bundle, candidates, match_status):
     return PopulationProjection(compounds, exclusions, representatives, summary)
 
 
+def taxid_key(value) -> str:
+    """生物種を比べるときの鍵。
+
+    PubChem RDF の生物種 URI の末尾は "TAXID10090" で、手順書の背景は "10090" と書く。
+    文字列のまま比べると実データでは一致が 0 件になり、経路集計が必ず
+    no_species_pathways になる（2026-11-13 に判明）。接頭辞を外してそろえる。
+    """
+    text = str(value or '').strip()
+    return text[len('TAXID'):] if text.upper().startswith('TAXID') else text
+
+
 def compute_pathways(projection, lookups, organism: str, min_members: int = 3):
     if type(min_members) is not int or min_members < 1:
         raise ValueError('min_membersは1以上です')
@@ -78,6 +89,7 @@ def compute_pathways(projection, lookups, organism: str, min_members: int = 3):
         return dict(base, tested=False, reason='matching_incomplete')
     if not organism:
         return dict(base, tested=False, reason='organism_required')
+    species = taxid_key(organism)
     lookups_by_key = {}
     for lookup in lookups:
         lookups_by_key.setdefault(lookup.get('inchikey'), []).append(lookup)
@@ -90,7 +102,7 @@ def compute_pathways(projection, lookups, organism: str, min_members: int = 3):
         seen, hits = set(), []
         for lookup in relevant:
             for hit in lookup['hits']:
-                if hit.get('taxid') == organism and hit['pathway_id'] not in seen:
+                if taxid_key(hit.get('taxid')) == species and hit['pathway_id'] not in seen:
                     seen.add(hit['pathway_id'])
                     hits.append(hit)
         if hits:

@@ -2,7 +2,7 @@
 from collections import Counter
 from massbank_context.evidence.selection import candidate_dicts
 from massbank_context.report.comparison import evidence_page, evidence_rows, population_projection
-from massbank_context.report.comparison_population import compute_pathways
+from massbank_context.report.comparison_population import compute_pathways, taxid_key
 
 
 def build_comparison_findings(store, analysis_id, organism='', include_pathways=False):
@@ -17,7 +17,7 @@ def build_comparison_findings(store, analysis_id, organism='', include_pathways=
         taxid = value.get('taxid') if isinstance(value, dict) else value
         if not confirmed or species.get('status') != 'confirmed' or not taxid:
             pathways = dict(tested=False, reason='organism_unconfirmed')
-        elif str(taxid) != str(organism):
+        elif taxid_key(taxid) != taxid_key(organism):
             pathways = dict(tested=False, reason='organism_context_mismatch')
         else:
             bundle, _, state = view
