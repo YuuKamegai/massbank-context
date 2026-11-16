@@ -5,7 +5,7 @@
 索引は `MASSBANK_CONTEXT_INDEX` のものを読み取り専用で開く。
 
 使い方:
-    MASSBANK_CONTEXT_INDEX=<索引> C:/Python314/python.exe scripts/calibrate_xenobiotic_thresholds.py \
+    MASSBANK_CONTEXT_INDEX=<索引> .venv/Scripts/python.exe scripts/calibrate_xenobiotic_thresholds.py \
         --shared 0.3 --top-n 10 --output <JSON>
 
 `--flat-ppm 10` は帯を持つ run（おとり）だけを帯なしの一律の許容幅で走らせる。

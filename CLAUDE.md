@@ -21,26 +21,40 @@ spec §8 の較正は r3 で改訂した期待に合格したが、独立の検�
 
 ## コマンド
 
-Python は `C:/Python314/python.exe`（`python` は PATH に無いことがある）。
+Python はリポジトリ直下の `.venv/Scripts/python.exe`（追跡外）。システムの
+`C:/Python314/python.exe` から作る。`python` は PATH に無いことがあるので、activate に頼らず
+パスで呼ぶ。`.venv/Scripts/*.exe`（pytest.exe など）は Windows の Application Control に
+黙って遮断されうるので、常に `python.exe -m ...` で起動する。
+
+作り直し:
 
 ```bash
-C:/Python314/python.exe -m pytest tests -q
+C:/Python314/python.exe -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
 ```
 
-単体テスト: `C:/Python314/python.exe -m pytest tests/test_matcher.py::test_name -q`
+```bash
+.venv/Scripts/python.exe -m pytest tests -q
+```
+
+単体テスト: `.venv/Scripts/python.exe -m pytest tests/test_matcher.py::test_name -q`
 
 索引ビルド（TTL 全走査は分〜時間。MCP ツールではなく CLI。spec §7.1）:
 
 ```bash
-C:/Python314/python.exe -m massbank_context.index build --ttl-dir <TTLのディレクトリ> --output index/massbank.sqlite
+.venv/Scripts/python.exe -m massbank_context.index build --ttl-dir <TTLのディレクトリ> --output index/massbank.sqlite
 ```
 
 `--limit N` で先頭 N ファイルだけの動作確認用索引を作れる（`index_meta.limit` に記録される）。
 
-サーバ起動: `C:/Python314/python.exe -m massbank_context.server`。
+サーバ起動: `.venv/Scripts/python.exe -m massbank_context.server`。
 索引パスは環境変数 `MASSBANK_CONTEXT_INDEX` で上書き可。
+パッケージは venv にインストールしていない。リポジトリ外を cwd にして起動するとき
+（`.mcp.json` や Claude Desktop の登録）は `PYTHONPATH` にリポジトリを渡す。
 
-lint 設定は無い。依存は `rdflib` と `mcp` のみ。
+lint 設定は無い。依存は `rdflib` と `mcp` のみ（`requirements.txt`。テスト用の pytest は
+`requirements-dev.txt`）。**mcp は `<2` に固定している** — 2.x は `mcp.server.fastmcp` を
+廃して `MCPServer` に改名しており、`server.py` が import の段階で落ちる。
 
 ## アーキテクチャ
 

@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 
+# 仮想環境。作り方は README の「セットアップ」。
+/.venv/
+
 # 構築済みの索引。core/config.py の既定が <repo>/index/massbank.sqlite で
 # 作業ツリーの中を指すため、放っておくと数百 MB の SQLite が git status に
 # 並び、事故で commit されうる。サイズだけの問題ではない: spec §4 が

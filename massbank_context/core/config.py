@@ -16,7 +16,7 @@ ARTIFACTS_PATH = Path(os.environ.get('MASSBANK_CONTEXT_ARTIFACTS', BASE_DIR / 'a
 INDEX_PATH = Path(os.environ.get(
     "MASSBANK_CONTEXT_INDEX", BASE_DIR / "index" / "massbank.sqlite"))
 
-BUILD_COMMAND = ("CLI: C:/Python314/python.exe -m massbank_context.index build"
+BUILD_COMMAND = ("CLI: .venv/Scripts/python.exe -m massbank_context.index build"
                  " --ttl-dir <dir> --output <sqlite>")
 
 # パスウェイのキャッシュ。索引本体とは別ファイルにする（索引の再ビルドで消えない）。

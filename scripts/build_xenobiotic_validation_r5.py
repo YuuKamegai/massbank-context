@@ -13,7 +13,7 @@ r4 の不合格の後に足した B の規則（親との共起、§5 の改訂�
 `<pol>/screen_r5_d1.tsv`・`<pol>/screen_r5_d2.tsv`・`artifacts_r5_d1/`・`artifacts_r5_d2/` と、結果の JSON
 （`ST003841/xenobiotic_calibration/validation_r5.json`）だけ。
 
-使い方: `MASSBANK_CONTEXT_INDEX=<索引> C:/Python314/python.exe scripts/build_xenobiotic_validation_r5.py`
+使い方: `MASSBANK_CONTEXT_INDEX=<索引> .venv/Scripts/python.exe scripts/build_xenobiotic_validation_r5.py`
 """
 from __future__ import annotations
 

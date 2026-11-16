@@ -31,6 +31,19 @@
 
 MassBank レコードのメタデータ取得（`catalog/` `bias/`）は未実装。
 
+## セットアップ
+
+リポジトリ直下に仮想環境 `.venv` を作り、以降のコマンドはその `python.exe` で実行する。
+
+```
+C:/Python314/python.exe -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+```
+
+`requirements.txt` は実行に要るもの（`rdflib` と `mcp`）、`requirements-dev.txt` は
+それにテスト用の `pytest` を足したもの。`mcp` は `<2` に固定している（2.x は
+`FastMCP` を `MCPServer` に改名しており、このサーバは起動しない）。
+
 ## ⚠ 外部への通信
 
 `resolve_pathways` は **rdfportal.org（PubChem SPARQL）へ外向きの HTTP を出す**。
@@ -51,7 +64,7 @@ SPARQL クエリの `VALUES` 節に入れる。試料名・群名・強度値・
 ## 索引を作る
 
 ```
-C:/Python314/python.exe -m massbank_context.index build --ttl-dir <TTLのディレクトリ> --output index/massbank.sqlite
+.venv/Scripts/python.exe -m massbank_context.index build --ttl-dir <TTLのディレクトリ> --output index/massbank.sqlite
 ```
 
 既定では `resolution_class == "high"` かつ `acquisition_class != "other"` かつ
@@ -79,7 +92,7 @@ CLI が INFO で出す世代別内訳（`gen_a: N files, M records, K peaks`）�
 ## サーバを起動する
 
 ```
-C:/Python314/python.exe -m massbank_context.server
+.venv/Scripts/python.exe -m massbank_context.server
 ```
 
 ### 環境変数
@@ -98,5 +111,5 @@ C:/Python314/python.exe -m massbank_context.server
 ## テスト
 
 ```
-C:/Python314/python.exe -m pytest tests -q
+.venv/Scripts/python.exe -m pytest tests -q
 ```

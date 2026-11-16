@@ -1,2 +1,4 @@
 rdflib>=7.0
-mcp>=1.0
+# mcp 2.x は FastMCP を MCPServer に改名し API も変えた。server.py は 1.x の
+# mcp.server.fastmcp を使うので、上限を付けないと新しい環境で起動しなくなる。
+mcp>=1.0,<2

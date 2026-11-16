@@ -11,7 +11,7 @@ r5 では親との共起の規則を試す組が無かったので、陽イオ�
 書くのは `datasets/reanalysis/MTBLS5071/xenobiotic_calibration/` の下の `pos/bundle_r6/`・`pos/build_record_r6.json`・
 `pos/screen_r6_d1.tsv`・`pos/screen_r6_d2.tsv`・`artifacts_r6_d1/`・`artifacts_r6_d2/`・`validation_r6.json` だけ。
 
-使い方: `MASSBANK_CONTEXT_INDEX=<索引> C:/Python314/python.exe scripts/build_xenobiotic_validation_r6.py`
+使い方: `MASSBANK_CONTEXT_INDEX=<索引> .venv/Scripts/python.exe scripts/build_xenobiotic_validation_r6.py`
 """
 from __future__ import annotations
 
