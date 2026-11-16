@@ -14,7 +14,8 @@ class PopulationProjection:
     summary: dict
 
 
-def build_population(bundle, candidates, match_status):
+def build_population(bundle, candidates, match_status, excluded=frozenset()):
+    """統計用の母集団。``excluded`` は呼び出し側が除いた特徴量で、理由 caller_excluded で数える。"""
     candidates = [asdict(c) if is_dataclass(c) else c for c in candidates]
     grouped, exclusions = {}, {}
     linked = {s.feature_id for s in bundle.spectrum_links}
@@ -27,7 +28,9 @@ def build_population(bundle, candidates, match_status):
         active = active_by_feature.get(fid, [])
         status = match_status.get(fid, {})
         reason = None
-        if mapping_failure(bundle, fid):
+        if fid in excluded:
+            reason = 'caller_excluded'
+        elif mapping_failure(bundle, fid):
             reason = 'msms_mapping_failed'
         elif fid in linked and status.get('status') not in TERMINAL_STATUSES:
             reason = 'matching_incomplete'

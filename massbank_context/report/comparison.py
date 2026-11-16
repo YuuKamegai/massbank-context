@@ -66,8 +66,8 @@ def _decode_cursor(cursor: str, expected: dict, n_ids: int, limit: int) -> dict:
                 detail_page=cur.get('mode') == 'evidence')
 
 
-def population_projection(bundle, candidates, matches):
-    return build_population(bundle, candidates, matches.get('features', {}))
+def population_projection(bundle, candidates, matches, excluded=frozenset()):
+    return build_population(bundle, candidates, matches.get('features', {}), excluded)
 
 
 def get_evidence(store, analysis_id: str, *, feature_ids=None, cursor=None, limit=50):

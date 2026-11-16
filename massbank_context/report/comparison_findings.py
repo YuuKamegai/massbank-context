@@ -5,8 +5,24 @@ from massbank_context.report.comparison import evidence_page, evidence_rows, pop
 from massbank_context.report.comparison_population import compute_pathways, taxid_key
 
 
-def build_comparison_findings(store, analysis_id, organism='', include_pathways=False):
+def _excluded_features(bundle, exclude_feature_ids, include_pathways) -> frozenset:
+    """経路集計の入力から除く特徴量。黙って無視しない（未知のIDと、効かない指定は誤り）。"""
+    if not exclude_feature_ids:
+        return frozenset()
+    if not isinstance(exclude_feature_ids, list) or not all(isinstance(x, str) for x in exclude_feature_ids):
+        raise ValueError('exclude_feature_idsは特徴量IDの配列で指定してください')
+    if not include_pathways:
+        raise ValueError('exclude_feature_idsは経路集計の入力から除く指定なので、include_pathways=Trueのときだけ使えます')
+    unknown = sorted(set(exclude_feature_ids) - {f.feature_id for f in bundle.features})
+    if unknown:
+        raise ValueError(f'exclude_feature_idsに未知の特徴量があります: {unknown}')
+    return frozenset(exclude_feature_ids)
+
+
+def build_comparison_findings(store, analysis_id, organism='', include_pathways=False,
+                              exclude_feature_ids=None):
     view = store.read_view(analysis_id)
+    excluded = _excluded_features(view[0], exclude_feature_ids, include_pathways)
     page = evidence_page(view, analysis_id)
     context = page['context']
     confirmed = context.get('status') == 'confirmed'
@@ -22,7 +38,7 @@ def build_comparison_findings(store, analysis_id, organism='', include_pathways=
         else:
             bundle, _, state = view
             matches = state.get('matches', {})
-            projection = population_projection(bundle, candidate_dicts(bundle, matches), matches)
+            projection = population_projection(bundle, candidate_dicts(bundle, matches), matches, excluded)
             pathways = compute_pathways(projection, state.get('lookups', {}).get('lookups', []), organism)
             pathways['exclusion_counts'] = dict(Counter(x['reason'] for x in projection.exclusions.values()))
             pathways.pop('exclusions', None)

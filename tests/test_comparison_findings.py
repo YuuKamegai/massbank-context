@@ -48,6 +48,53 @@ def test_pathways_match_pubchem_taxid_in_either_form(tmp_path, context_taxid, or
     assert pathways['rows'][0]['feature_ids'] == ['f1', 'f2']
 
 
+def test_caller_can_exclude_features_from_the_pathway_input(tmp_path):
+    from massbank_context.report.comparison_findings import build_comparison_findings
+    store, aid = _confirmed_store(tmp_path, '10090')
+    result = build_comparison_findings(store, aid, organism='10090', include_pathways=True,
+                                       exclude_feature_ids=['f1'])
+    pathways = result['pathways']
+    # KEY_A は f2 だけで代表される。除いた数は理由つきで返す
+    assert pathways['rows'][0]['feature_ids'] == ['f2']
+    assert pathways['exclusion_counts']['caller_excluded'] == 1
+    # 事実（全特徴の集計）は除外の影響を受けない
+    assert result['facts']['summary']['n_features_total'] == 8
+    assert len(result['facts']['features']) == 8
+
+
+def test_excluding_every_member_removes_the_compound(tmp_path):
+    from massbank_context.report.comparison_findings import build_comparison_findings
+    store, aid = _confirmed_store(tmp_path, '10090')
+    pathways = build_comparison_findings(store, aid, organism='10090', include_pathways=True,
+                                         exclude_feature_ids=['f2', 'f1'])['pathways']
+    assert pathways['n_with_species_pathways'] == 0
+    assert pathways['reason'] == 'no_species_pathways'
+    assert pathways['exclusion_counts']['caller_excluded'] == 2
+
+
+@pytest.mark.parametrize('kwargs, message', [
+    (dict(include_pathways=True, exclude_feature_ids=['nope']), 'nope'),
+    (dict(include_pathways=False, exclude_feature_ids=['f1']), 'include_pathways'),
+])
+def test_exclusion_is_never_silently_ignored(tmp_path, kwargs, message):
+    from massbank_context.report.comparison_findings import build_comparison_findings
+    store, aid = _confirmed_store(tmp_path, '10090')
+    with pytest.raises(ValueError, match=message):
+        build_comparison_findings(store, aid, organism='10090', **kwargs)
+
+
+def test_exclusion_reaches_the_public_tool(tmp_path, monkeypatch):
+    import json
+    from massbank_context.core import config
+    from massbank_context.tools import evidence_tools as tools
+    monkeypatch.setattr(config, 'ARTIFACTS_PATH', tmp_path / 'store')
+    _, aid = _confirmed_store(tmp_path, '10090')
+    result = json.loads(tools.draft_comparison_findings(aid, '10090', True, exclude_feature_ids=['f1']))
+    assert result['pathways']['exclusion_counts']['caller_excluded'] == 1
+    error = json.loads(tools.draft_comparison_findings(aid, '10090', True, exclude_feature_ids=['nope']))
+    assert error['error']['code'] == 'invalid_evidence_request'
+
+
 def test_other_species_is_still_a_context_mismatch(tmp_path):
     from massbank_context.report.comparison_findings import build_comparison_findings
     store, aid = _confirmed_store(tmp_path, '10090')

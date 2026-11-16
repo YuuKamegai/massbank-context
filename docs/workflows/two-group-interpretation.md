@@ -18,6 +18,9 @@
    特徴量ページは約128KiBを目安に件数を減らすため、要求limitより少ない行でnext_cursorが返る場合がある。
    cursorが失効したら初めから取得し直す。大量の根拠は特徴量IDを絞って段階的に読む。
 8. `draft_comparison_findings`で事実と解釈の材料を取得する。経路検定は任意。
+   薬剤由来など経路集計に入れたくない特徴量（例: `get_xenobiotic_screen`の水準A・B）は
+   `exclude_feature_ids`で除く。除いた数は`pathways.exclusion_counts.caller_excluded`に出る。
+   実データでは種別のパスウェイを持つ化合物がごく少なく、検定が成り立たないことが多い（設計書§13.2）。
 
 回答は「観測事実」「候補と根拠」「解釈仮説」「限界と追加検証」に分ける。
 例: 「f1はBで増加。候補c1を仮定すると、RDF根拠e1の経路参加関係と整合する。

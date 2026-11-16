@@ -76,10 +76,12 @@ def get_comparison_evidence(analysis_id: str, feature_ids: list[str] | None = No
 
 
 def draft_comparison_findings(analysis_id: str, organism: str = '',
-                              include_pathways: bool = False) -> str:
-    """解釈用の事実と空の仮説を返す。経路集計は任意で、organismはNCBIのtaxid（10090でもTAXID10090でもよい）。活性断定をせず根拠IDを引用して会話側で解釈する。"""
+                              include_pathways: bool = False,
+                              exclude_feature_ids: list[str] | None = None) -> str:
+    """解釈用の事実と空の仮説を返す。経路集計は任意で、organismはNCBIのtaxid（10090でもTAXID10090でもよい）。exclude_feature_idsは経路集計の入力から除く特徴量（例: 外来の分子の走査でA・Bの特徴）で、include_pathways=Trueのときだけ使え、未知のIDは誤り。除いた数はpathways.exclusion_countsのcaller_excluded。事実の集計は変わらない。活性断定をせず根拠IDを引用して会話側で解釈する。"""
     def operation(store):
-        result = build_comparison_findings(store, analysis_id, organism, include_pathways)
+        result = build_comparison_findings(store, analysis_id, organism, include_pathways,
+                                           exclude_feature_ids)
         return dict(result, facts=tabulate(result['facts']))
     return _invoke(operation)
 
