@@ -27,7 +27,7 @@ from massbank_context.evidence.store import EvidenceStore
 from massbank_context.experiment.bundle import (
     POLARITIES, parse_intensities, parse_samples, role_path)
 from massbank_context.xenobiotic.mass import (
-    MassRelation, adduct_recognized, find_mass_relations, validate_ppm_bands)
+    MassRelation, adduct_recognized, find_mass_relations, validate_ppm_bands, validate_ppm_offset)
 from massbank_context.spectral.matcher import BAND_PASS
 from massbank_context.xenobiotic.msms import (
     ForwardHit, SharedResult, forward_rank, open_index, reference_bins, shared_evidence)
@@ -43,8 +43,11 @@ __all__ = ["SCREEN_COLUMNS", "LEVELS", "PairEvidence", "assign_level", "resolve_
 SCREEN_COLUMNS = ['feature_id', 'mz', 'rt', 'log2fc', 'q_value', 'significant', 'level', 'entry_id',
                   'role', 'relation', 'theoretical_mz', 'ppm', 'msms_shared_score', 'msms_shared_n',
                   'msms_shared_formulas', 'forward_rank', 'detected_test', 'detected_reference',
-                  'rho_parent', 'notes']
+                  'rho_parent', 'notes', 'coeluting']
 LEVELS = ('A', 'B', 'C', 'D')
+#: 共溶出とみなす RT の差の既定（分）。印だけで水準には使わない。
+DEFAULT_COELUTION_RT_TOL = 0.1
+_RT_EPS = 1e-9  # 浮動小数の境目（1.3 − 1.2 など）を窓の内に入れる
 
 SNAPSHOT_KIND = 'xenobiotic_screen'
 MAX_ROWS_LIMIT = 200
@@ -129,6 +132,53 @@ def _validated_bands(ppm, max_shifts, ppm_bands) -> list[dict]:
         return validate_ppm_bands(ppm_bands)
     except (ValueError, TypeError, AttributeError) as exc:
         raise XenobioticError(f"ppm_bands が不正: {exc}") from exc
+
+
+def _validated_offset(ppm_offset) -> dict | None:
+    try:
+        return validate_ppm_offset(ppm_offset)
+    except ValueError as exc:
+        raise XenobioticError(f"ppm_offset が不正: {exc}") from exc
+
+
+def _validated_rt_tol(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise XenobioticError(f"coelution_rt_tol は正の有限数（分）: {value!r}")
+    return float(value)
+
+
+def _coelution(features: Sequence[Feature], relations: dict,
+               rt_tol: float) -> dict[tuple, list[tuple[str, str]]]:
+    """同じ分子の別のイオンの形に一致し、同じ RT に出る別の特徴（共溶出の印。spec §6）。
+
+    同じ分子とは、同じ entry・同じ質量差の組。別の形とは、付加体か損失が違うこと
+    （同じ形に割れたスポットは裏付けにならない）。RT の差が ``rt_tol`` 分以内なら共溶出。
+    鍵は (feature_id, entry_id, shifts, ion)、値は (相手の特徴, 相手のイオン) を特徴の順に並べたもの。
+    水準 A〜D には使わない。印だけで、較正（spec §10）の結果は変えない。
+    """
+    rt = {f.feature_id: f.rt for f in features}
+    order = {f.feature_id: i for i, f in enumerate(features)}
+    groups: dict[tuple, list[tuple[str, str]]] = {}
+    for (fid, eid), found in relations.items():
+        if rt.get(fid) is None:
+            continue
+        for relation in found:
+            groups.setdefault((eid, relation.shifts), []).append((fid, relation.ion))
+    result: dict[tuple, list[tuple[str, str]]] = {}
+    for (eid, shifts), members in groups.items():
+        for fid, ion in members:
+            partners = {(other, other_ion) for other, other_ion in members
+                        if other != fid and other_ion != ion
+                        and abs(rt[fid] - rt[other]) <= rt_tol + _RT_EPS}
+            if partners:
+                result[(fid, eid, shifts, ion)] = sorted(partners, key=lambda p: (order[p[0]], p[1]))
+    return result
+
+
+def _coelution_cell(coelution: dict, feature_id: str, entry_id: str,
+                    relation: MassRelation) -> str | None:
+    partners = coelution.get((feature_id, entry_id, relation.shifts, relation.ion))
+    return ';'.join(f'{fid}:{ion}' for fid, ion in partners) if partners else None
 
 
 def _low_score_adducts(bundle: EvidenceBundle) -> frozenset[str]:
@@ -390,7 +440,7 @@ def _notes(feature: Feature, msms_state: str | None, entry_reason: str | None,
 def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
                 spectra: dict[str, list[QuerySpectrum]], msms: _MsmsStrand,
                 pattern: _PatternStrand, dropped: Counter,
-                low_score: frozenset[str]) -> list[list]:
+                low_score: frozenset[str], coelution: dict) -> list[list]:
     rows: list[list] = []
     dropped_by_feature: Counter = Counter()
     for (fid, _entry_id), n in dropped.items():
@@ -409,7 +459,7 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
             rows.append(head + [None] * blank + [counts[0], counts[1], None]
                         + [_notes(feature, state, msms.all_reason, reason, None,
                                   n_dropped=dropped_by_feature[fid],
-                                  low_score=fid in low_score)])
+                                  low_score=fid in low_score), None])
             continue
         for pair in pairs[fid]:
             entry, shared = pair.entry, pair.shared
@@ -425,10 +475,24 @@ def _build_rows(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
             start = [pair.level, entry.entry_id, entry.role]
             for relation in pair.relations:
                 rows.append(head + start + [relation.relation, round_floats(relation.theoretical_mz),
-                                            round_floats(relation.ppm, 4)] + tail)
+                                            round_floats(relation.ppm, 4)] + tail
+                            + [_coelution_cell(coelution, fid, entry.entry_id, relation)])
             if not pair.relations:
-                rows.append(head + start + ['msms_only', None, None] + tail)
+                rows.append(head + start + ['msms_only', None, None] + tail + [None])
     return rows
+
+
+def _coelution_summary(features: Sequence[Feature], pairs: dict[str, list[_Pair]],
+                       coelution: dict, rt_tol: float) -> dict:
+    """共溶出の相手がいる特徴の数と、その組の水準（特徴ごとに最も強いもの）。"""
+    levels = dict.fromkeys(LEVELS, 0)
+    for feature in features:
+        for pair in pairs[feature.feature_id]:   # 水準の強い順に並んでいる
+            if any((feature.feature_id, pair.entry.entry_id, r.shifts, r.ion) in coelution
+                   for r in pair.relations):
+                levels[pair.level] += 1
+                break
+    return {'rt_tol': rt_tol, 'n_features': sum(levels.values()), 'levels': levels}
 
 
 def _summarize(bundle: EvidenceBundle, entries: Sequence[XenoEntry],
@@ -518,19 +582,28 @@ def _publish(store: EvidenceStore, analysis_id: str, payload: dict, target: Path
 
 def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: float,
                ppm_bands: list[dict] | None = None, polarity: str | None = None,
-               max_shifts: int = 2, output_path: str | None = None) -> dict:
-    """走査して全特徴の TSV とスナップショットを書き、要約を返す（行は載せない）。"""
+               max_shifts: int = 2, output_path: str | None = None,
+               ppm_offset: dict | None = None,
+               coelution_rt_tol: float = DEFAULT_COELUTION_RT_TOL) -> dict:
+    """走査して全特徴の TSV とスナップショットを書き、要約を返す（行は載せない）。
+
+    ``ppm_offset`` は質量の窓の中心のずれ（ms-data-parser と同じ形）。渡したときだけ
+    ``params`` に残す（渡さなければ記録は前と同じ）。``coelution_rt_tol`` は共溶出の印の
+    RT の幅（分）で、水準は変えない。
+    """
     bundle, base_revision, _ = store.read_view(analysis_id)
     polarity = resolve_polarity(bundle.manifest, polarity)
     test_side = resolve_test_side(bundle.manifest, test_group)
     bands = _validated_bands(ppm, max_shifts, ppm_bands)
+    offset = _validated_offset(ppm_offset)
+    rt_tol = _validated_rt_tol(coelution_rt_tol)
     entries, registration_id = load_registration(store, analysis_id)
 
     features = bundle.features
     spectra = _feature_spectra(bundle)
     low_score = _low_score_adducts(bundle)
     relations, mass_counts, dropped = find_mass_relations(features, entries, polarity, ppm, bands,
-                                                          max_shifts, low_score)
+                                                          max_shifts, low_score, offset)
     conn, meta = open_index()
     index = {'bin_width': meta['bin_width'], 'built_at': meta.get('built_at')}
     try:
@@ -540,8 +613,10 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
         conn.close()
     pattern = _pattern_strand(store, analysis_id, bundle, test_side)
     pairs = _judge_pairs(features, entries, relations, msms, pattern)
-    rows = _build_rows(features, pairs, spectra, msms, pattern, dropped, low_score)
+    coelution = _coelution(features, relations, rt_tol)
+    rows = _build_rows(features, pairs, spectra, msms, pattern, dropped, low_score, coelution)
     summary = _summarize(bundle, entries, pairs, spectra, msms, pattern, mass_counts, len(rows))
+    summary['coelution'] = _coelution_summary(features, pairs, coelution, rt_tol)
 
     if output_path is None:
         # analysis_id の ':' は Windows のファイル名に使えない
@@ -554,7 +629,9 @@ def run_screen(store: EvidenceStore, analysis_id: str, *, test_group: str, ppm: 
     versions = {'adduct_table': ADDUCT_TABLE_VERSION, 'shift_table': SHIFT_TABLE_VERSION,
                 'thresholds': THRESHOLDS_VERSION}
     params = {'test_group': test_group, 'ppm': ppm, 'ppm_bands': bands, 'polarity': polarity,
-              'max_shifts': max_shifts}
+              'max_shifts': max_shifts, 'coelution_rt_tol': rt_tol}
+    if offset is not None:
+        params['ppm_offset'] = offset
     payload = {'params': params, 'versions': versions, 'thresholds': dict(THRESHOLDS),
                'registration_id': registration_id, 'index': index, 'summary': summary,
                'columns': SCREEN_COLUMNS,
@@ -623,6 +700,7 @@ def get_screen_rows(store: EvidenceStore, analysis_id: str, *, feature_ids: list
     return {'screen_revision': revision, 'registration_id': snapshot['registration_id'],
             'stale_registration': snapshot['registration_id'] != current_registration,
             'n_matched': len(matched),
-            'rows': as_tsv(SCREEN_COLUMNS, matched[offset:end]),
+            # 列を足す前に保存した走査は、そのときの列名で出す（feature_id と level の位置は変えていない）
+            'rows': as_tsv(snapshot.get('columns') or SCREEN_COLUMNS, matched[offset:end]),
             'next_cursor': _encode_cursor(scope, end) if end < len(matched) else None,
             'unknown_feature_ids': unknown}

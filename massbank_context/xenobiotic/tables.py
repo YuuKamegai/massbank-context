@@ -36,8 +36,8 @@ SHIFT_TABLE_VERSION = "xeno-shifts-1"
 THRESHOLDS_VERSION = "xeno-thresholds-2026-11-05-r5"
 
 # 実データの較正の値（spec §10.0）。msms_shared_min・msms_top_n は r3 の格子から select_point が選んだ値。
-# codetect_min_fraction は r4 の不合格の後に足した B の規則（spec §5 の改訂）。値は r4 の結果を見て決めたので、
-# 独立の検証 r5（spec §10.12）を通るまで確かめられていない。
+# codetect_min_fraction は r4 の不合格の後に足した B の規則（spec §5 の改訂）。値は r4 の結果を見て決めた。
+# 独立の検証 r5・r6（spec §10.12・§10.13）は条件を満たしたが、規則を試す組が無く、確かめられていない。
 THRESHOLDS = {
     "msms_shared_min": 0.12,
     "msms_top_n": 10,
@@ -48,7 +48,8 @@ THRESHOLDS = {
 }
 
 # 較正の合否。走査の要約に載せる。r3 の合格は r2 の未達を見て改訂した期待に対するもの（spec §10.0）。
-# r4（独立の検証）は不合格で、B の規則を改めた。r5 の結果が出るまで、この版は検証されていない。
+# r4（独立の検証）は不合格で、B の規則を改めた。r5・r6 では規則を試す組が無く、この版は検証されていない
+# （spec §10.14）。
 CALIBRATION = {
     "status": "revised_after_r4_failure_unvalidated",
     "record": "docs/superpowers/specs/2026-11-04-xenobiotic-screen-design.md §10",

@@ -5,7 +5,8 @@ import pytest
 
 from massbank_context.core.evidence_models import Feature
 from massbank_context.core.formula import parse_formula
-from massbank_context.xenobiotic.mass import find_mass_relations, tolerance_ppm, validate_ppm_bands
+from massbank_context.xenobiotic.mass import (
+    find_mass_relations, offset_ppm, tolerance_ppm, validate_ppm_bands, validate_ppm_offset)
 from massbank_context.xenobiotic.tables import ion_forms
 
 
@@ -172,6 +173,42 @@ def test_unrecognized_adduct_is_kept_and_counted_per_feature():
 def test_ppm_bands_refuse_unknown_keys():
     with pytest.raises(ValueError, match='未知のキー'):
         validate_ppm_bands([{'min_mz': 200, 'max': 300, 'ppm': 5}])
+
+
+def test_ppm_offset_is_normalized_like_ms_data_parser():
+    assert validate_ppm_offset(None) is None
+    assert validate_ppm_offset({'bands': [{'max_mz': 300, 'offset': 1}, {'max_mz': 200, 'offset': -8.3}]}) == {
+        'default': 0.0, 'bands': [{'max_mz': 200.0, 'offset': -8.3}, {'max_mz': 300.0, 'offset': 1.0}]}
+
+
+@pytest.mark.parametrize('raw', [
+    [], {'default': 1, 'extra': 0}, {'default': True}, {'default': float('nan')},
+    {'bands': [{'max_mz': 200}]}, {'bands': [{'max_mz': 200, 'offset': 1, 'ppm': 5}]},
+    {'bands': [{'max_mz': None, 'offset': 1}]}, {'bands': ['x']},
+])
+def test_ppm_offset_refuses_malformed_specs(raw):
+    with pytest.raises(ValueError, match='ppm_offset'):
+        validate_ppm_offset(raw)
+
+
+def test_ppm_offset_band_is_chosen_by_theoretical_mz():
+    spec = validate_ppm_offset({'default': 2.0, 'bands': [{'max_mz': 200, 'offset': -8.3}]})
+    assert offset_ppm(199.9, spec) == -8.3
+    assert offset_ppm(200.0, spec) == 2.0      # 境目は次の帯（上流と同じ `<`）
+    assert offset_ppm(150.0, None) == 0.0
+
+
+def test_ppm_offset_moves_the_window_center_but_not_the_reported_ppm():
+    # ケタミン [M+H]+ の理論 m/z は 238.09931。238.1012 は +7.9 ppm、238.0990 は −1.3 ppm。
+    entries = [SimpleNamespace(entry_id='X1', composition=parse_formula('C13H16ClNO'))]
+    features = [_feature('shifted', 238.1012), _feature('centered', 238.0990)]
+    plain, _, _ = find_mass_relations(features, entries, 'positive', 5.0, [], 0)
+    assert ('shifted', 'X1') not in plain and ('centered', 'X1') in plain
+    moved, _, _ = find_mass_relations(features, entries, 'positive', 5.0, [], 0,
+                                      ppm_offset=validate_ppm_offset({'default': 8.0}))
+    assert ('centered', 'X1') not in moved
+    shifted = [r for r in moved[('shifted', 'X1')] if r.ion == '[M+H]+']
+    assert shifted[0].ppm == pytest.approx(7.9, abs=0.1)   # 行の ppm は実測 − 理論のまま
 
 
 def test_ppm_bands_choose_by_theoretical_mz():

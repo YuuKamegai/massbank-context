@@ -39,7 +39,18 @@ def test_docstrings_describe_the_arguments():
     assert all(word in doc for word in (*ROLES, *RECEIVED_BY, 'entry_id', 'role', 'name', 'inchikey',
                                         'formula', 'parent_entry_id', 'received_by'))
     doc = screen_xenobiotic_features.__doc__
-    assert all(word in doc for word in ('min_mz', 'max_mz', 'ppm_bands', '手順書'))
+    assert all(word in doc for word in ('min_mz', 'max_mz', 'ppm_bands', 'ppm_offset',
+                                        'coelution_rt_tol', 'coeluting', '手順書'))
+
+
+def test_ppm_offset_reaches_the_screen(tmp_path, monkeypatch):
+    aid = _load_v3(tmp_path, monkeypatch)
+    json.loads(register_xenobiotics(aid, [KET]))
+    offset = {'default': 0, 'bands': [{'max_mz': 200, 'offset': -8.3}]}
+    summary = json.loads(screen_xenobiotic_features(aid, 'Drug', 5.0, ppm_offset=offset,
+                                                    coelution_rt_tol=0.2))
+    assert summary['params']['ppm_offset'] == {'default': 0.0, 'bands': [{'max_mz': 200.0, 'offset': -8.3}]}
+    assert summary['params']['coelution_rt_tol'] == 0.2 and summary['coelution']['rt_tol'] == 0.2
 
 
 def test_register_and_screen_advance_the_evidence_revision(tmp_path, monkeypatch):

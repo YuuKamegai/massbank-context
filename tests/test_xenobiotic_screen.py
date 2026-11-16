@@ -97,7 +97,7 @@ def test_columns_and_levels_are_fixed():
         'feature_id', 'mz', 'rt', 'log2fc', 'q_value', 'significant', 'level', 'entry_id', 'role',
         'relation', 'theoretical_mz', 'ppm', 'msms_shared_score', 'msms_shared_n',
         'msms_shared_formulas', 'forward_rank', 'detected_test', 'detected_reference',
-        'rho_parent', 'notes']
+        'rho_parent', 'notes', 'coeluting']
     assert LEVELS == ('A', 'B', 'C', 'D')
 
 
@@ -274,8 +274,8 @@ def test_unrelated_feature_keeps_detection_counts(screened):
     row = _row(rows, 'endo', '')
     assert row['mz'] == '300.2' and row['significant'] == 'true'
     assert (row['detected_test'], row['detected_reference']) == ('6', '6')
-    filled = {'detected_test', 'detected_reference'}
-    assert all(row[c] == '' for c in SCREEN_COLUMNS[6:-1] if c not in filled)
+    filled = {'detected_test', 'detected_reference', 'notes'}
+    assert all(row[c] == '' for c in SCREEN_COLUMNS[6:] if c not in filled)
 
 
 def test_rows_follow_feature_order_then_strength(screened):
@@ -376,6 +376,24 @@ def test_snapshot_keeps_rows_and_versions(registered):
     assert payload['versions'] == summary['versions']
 
 
+def test_rows_of_an_earlier_screen_keep_their_own_columns(screened_store, monkeypatch):
+    # coeluting の列を足す前に保存した走査は 20 列。今の列名で出すと見出しと中身が食い違う
+    store, aid = screened_store
+    original = store.get_snapshot
+
+    def before_coeluting(analysis_id, revision):
+        snapshot = original(analysis_id, revision)
+        if 'columns' not in snapshot:      # 登録のスナップショットはそのまま
+            return snapshot
+        return dict(snapshot, columns=snapshot['columns'][:-1], rows=[row[:-1] for row in snapshot['rows']])
+
+    monkeypatch.setattr(store, 'get_snapshot', before_coeluting)
+    lines = get_screen_rows(store, aid, limit=200)['rows'].split('\n')
+    header = lines[0].split('\t')
+    assert header[-1] == 'notes' and 'coeluting' not in header
+    assert all(len(line.split('\t')) == len(header) for line in lines[1:])
+
+
 def test_v2_without_polarity_requires_argument(analysis_v2):
     with pytest.raises(XenobioticError) as info:
         run_screen(*analysis_v2, test_group='Drug', ppm=5)
@@ -417,6 +435,10 @@ def test_unknown_detection_is_not_counted_as_undetected(tmp_path, monkeypatch):
     (dict(test_group='Drug', ppm=float('inf')), 'invalid_xenobiotic_request'),
     (dict(test_group='Drug', ppm_bands=[{'ppm': -1}]), 'invalid_xenobiotic_request'),
     (dict(test_group='Drug', ppm_bands=['x']), 'invalid_xenobiotic_request'),
+    (dict(test_group='Drug', ppm_offset={'default': 'x'}), 'invalid_xenobiotic_request'),
+    (dict(test_group='Drug', coelution_rt_tol=0), 'invalid_xenobiotic_request'),
+    (dict(test_group='Drug', coelution_rt_tol=float('nan')), 'invalid_xenobiotic_request'),
+    (dict(test_group='Drug', ppm_offset={'bands': [{'max_mz': 200}]}), 'invalid_xenobiotic_request'),
 ])
 def test_screen_argument_errors(registered, kwargs, code):
     with pytest.raises(XenobioticError) as info:
@@ -458,6 +480,52 @@ def test_ppm_bands_override_tolerance(registered):
     rows = _read_tsv(summary['output_path'])
     assert _row(rows, 'k_parent', 'X1')['relation'] == 'msms_only'
     assert summary['params']['ppm_bands'] == [{'min_mz': None, 'max_mz': None, 'ppm': 0.001}]
+
+
+def test_coeluting_ion_forms_of_the_same_molecule_are_marked(screened):
+    # k_parent（ケタミン [M+H]+）と k_frag（同じ分子の [M+H-H2O]+）は同じ RT（1 分）に出る
+    summary, rows = screened
+    assert _row(rows, 'k_parent', 'X1')['coeluting'] == 'k_frag:[M+H-H2O]+'
+    assert _row(rows, 'k_frag', 'X1')['coeluting'] == 'k_parent:[M+H]+'
+    # 質量差のある一致（別の分子）と MS/MS だけの組には付けない
+    assert _row(rows, 'k_hnk', 'X1')['coeluting'] == ''
+    assert _row(rows, 'x_msms', 'X1')['coeluting'] == ''
+    assert _row(rows, 'endo', '')['coeluting'] == ''
+    # 水準は変えない（印だけ）
+    assert _feature_levels(rows)['k_frag'] == 'D'
+    assert summary['params']['coelution_rt_tol'] == 0.1
+    assert summary['coelution'] == {'rt_tol': 0.1, 'n_features': 2,
+                                    'levels': {'A': 1, 'B': 0, 'C': 0, 'D': 1}}
+
+
+def test_coelution_needs_a_different_ion_form(tmp_path, monkeypatch):
+    # 同じ [M+H]+ に割れたスポット（k_split）は k_parent の裏付けにならないが、k_frag とは別の形
+    _with_features(monkeypatch, ('k_split', 238.0991, None, (6, 0), [1] * 6))
+    rows = _read_tsv(run_screen(*_analysis(tmp_path, monkeypatch), test_group='Drug', ppm=5)['output_path'])
+    assert _row(rows, 'k_parent', 'X1')['coeluting'] == 'k_frag:[M+H-H2O]+'
+    # 相手はバンドルの特徴の順（足した k_split はバンドルの先頭にある）
+    assert _row(rows, 'k_frag', 'X1')['coeluting'] == 'k_split:[M+H]+;k_parent:[M+H]+'
+
+
+def test_coelution_follows_the_rt_tolerance(registered, monkeypatch):
+    store, aid = registered
+    _alter_bundle(monkeypatch, store, lambda bundle: replace(bundle, features=tuple(
+        replace(f, rt=1.3) if f.feature_id == 'k_frag' else f for f in bundle.features)))
+    near = _read_tsv(run_screen(store, aid, test_group='Drug', ppm=5)['output_path'])
+    assert _row(near, 'k_parent', 'X1')['coeluting'] == ''
+    wide = _read_tsv(run_screen(store, aid, test_group='Drug', ppm=5,
+                                coelution_rt_tol=0.5)['output_path'])
+    assert _row(wide, 'k_parent', 'X1')['coeluting'] == 'k_frag:[M+H-H2O]+'
+
+
+def test_ppm_offset_moves_the_mass_window(registered):
+    # k_parent は理論 m/z から −1.3 ppm。中心を +8 ppm にずらすと ±5 ppm の窓から外れる。
+    plain = run_screen(*registered, test_group='Drug', ppm=5)
+    assert 'ppm_offset' not in plain['params']      # 渡さなければ記録も前と同じ
+    summary = run_screen(*registered, test_group='Drug', ppm=5, ppm_offset={'default': 8})
+    rows = _read_tsv(summary['output_path'])
+    assert _row(rows, 'k_parent', 'X1')['relation'] == 'msms_only'
+    assert summary['params']['ppm_offset'] == {'default': 8.0, 'bands': []}
 
 
 def test_entry_without_reference_spectra_is_unavailable(tmp_path, monkeypatch):

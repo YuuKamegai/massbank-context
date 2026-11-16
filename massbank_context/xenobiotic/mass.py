@@ -22,6 +22,8 @@ __all__ = [
     "MassRelation",
     "validate_ppm_bands",
     "tolerance_ppm",
+    "validate_ppm_offset",
+    "offset_ppm",
     "adduct_recognized",
     "find_mass_relations",
 ]
@@ -84,6 +86,41 @@ def tolerance_ppm(theoretical_mz: float, ppm: float, bands: list[dict]) -> float
     return ppm
 
 
+def _finite(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def validate_ppm_offset(raw: dict | None) -> dict | None:
+    """質量の窓の中心のずれを検証して正規化する。誤りは ``ValueError``。
+
+    形は ms-data-parser の ``ppm_offset`` と同じ ``{"default": 0.0, "bands": [{"max_mz", "offset"}]}``
+    （上流で決めた値をそのまま渡せるようにする）。中心は「実測 − 理論」の ppm の符号つきの値。
+    帯は ``max_mz`` の昇順に並べ、理論 m/z が ``max_mz`` 未満の最初の帯を使う（``offset_ppm``）。
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"default", "bands"} or not _finite(raw.get("default", 0.0)):
+        raise ValueError(f"ppm_offset は {{default, bands: [{{max_mz, offset}}]}}: {raw!r}")
+    bands = []
+    for band in raw.get("bands") or []:
+        if (not isinstance(band, dict) or set(band) != {"max_mz", "offset"}
+                or not _finite(band["max_mz"]) or not _finite(band["offset"])):
+            raise ValueError(f"ppm_offset の帯は {{max_mz, offset}}（どちらも有限数）: {band!r}")
+        bands.append({"max_mz": float(band["max_mz"]), "offset": float(band["offset"])})
+    return {"default": float(raw.get("default", 0.0)),
+            "bands": sorted(bands, key=lambda b: b["max_mz"])}
+
+
+def offset_ppm(theoretical_mz: float, spec: dict | None) -> float:
+    """理論 m/z の帯の中心のずれ（ppm）。境目の m/z は次の帯（上流と同じ ``<``）。"""
+    if spec is None:
+        return 0.0
+    for band in spec["bands"]:
+        if theoretical_mz < band["max_mz"]:
+            return band["offset"]
+    return spec["default"]
+
+
 def _normalize_adduct(text: str) -> str:
     """空白を除き、MS-DIAL の ``]1+`` / ``]1-`` を ``]+`` / ``]-`` にそろえる。"""
     s = "".join(text.split())
@@ -113,8 +150,12 @@ def find_mass_relations(
     ppm_bands: list[dict],
     max_shifts: int,
     low_score_adducts: frozenset[str] = frozenset(),
+    ppm_offset: dict | None = None,
 ) -> tuple[dict[tuple[str, str], list[MassRelation]], Counter, Counter]:
     """各 entry の理論 m/z が窓に入る特徴を探す。鍵は (feature_id, entry_id)。
+
+    窓は「理論 m/z × (1 + (中心 ± 許容幅) ppm)」。中心は ``ppm_offset``（正規化済み。
+    ``validate_ppm_offset``）で、無ければ 0。行の ``ppm`` は中心に依らず実測 − 理論のまま。
 
     各リストは (質量差の数, |ppm|) 順で、1 つの (特徴, entry) に複数あれば全部残す。
     特徴に付加体の記載があり、認識できて、損失を除いた付加体同士が違えば落とす。認識できない
@@ -147,8 +188,9 @@ def find_mass_relations(
     for entry in entries:
         for form in ion_forms(entry.composition, polarity, max_shifts):
             tol = tolerance_ppm(form.mz, ppm, ppm_bands)
-            lo = bisect_left(mzs, form.mz * (1 - tol * 1e-6))
-            hi = bisect_right(mzs, form.mz * (1 + tol * 1e-6))
+            center = offset_ppm(form.mz, ppm_offset)
+            lo = bisect_left(mzs, form.mz * (1 + (center - tol) * 1e-6))
+            hi = bisect_right(mzs, form.mz * (1 + (center + tol) * 1e-6))
             for mz, feature in indexed[lo:hi]:
                 adduct = adduct_of[feature.feature_id]
                 if adduct is not None and adduct != form.adduct:
