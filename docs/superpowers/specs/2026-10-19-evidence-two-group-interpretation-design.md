@@ -164,7 +164,7 @@ PubChem根拠には対象InChIKey、返却URI、関係述語、種情報、endpo
 | `match_feature_spectra(analysis_id, feature_ids, top_k)` | 対応済みスペクトルを既存エンジンで照合し、候補・条件を保持 |
 | `resolve_candidate_evidence(analysis_id, candidate_ids, refresh=False)` | ローカルメタデータとPubChem関連の取得・照会状態の記録 |
 | `get_comparison_evidence(analysis_id, feature_ids, cursor, limit)` | 全体集計、または指定特徴量の型付き根拠をページ単位で取得 |
-| `draft_comparison_findings(analysis_id, organism, include_pathways=False)` | 参照可能な事実と仮説スロット、制約、任意の経路集計 |
+| `draft_comparison_findings(analysis_id, organism, include_pathways=False, exclude_feature_ids=None)` | 参照可能な事実と仮説スロット、制約、任意の経路集計（`exclude_feature_ids` は 2026-11-16 に追加。§13） |
 
 既存の8ツールは維持する。新ツールは内部の型付きサービスを利用し、公開TSVを再パースしない。
 詳細取得は既定50特徴量・最大200、候補照合top_kは既定5・最大20とする。
@@ -250,3 +250,46 @@ LLM回答の科学的妥当性はテスト成功だけでは確定しない。
 - [上流比較の過去調査](../../surveys/2026-08-31-massbank-rdf-upstream-comparison.md)（2026-08-31時点）
 - `massbank_context/experiment/contract.py`, `tools/pathway_tools.py`, `tools/match_tools.py`, `tools/report_tools.py`
 - `massbank_context/core/models.py`, `core/session.py`, `kg/pathway.py`
+
+## 13. 事実確認の記録と、その後の変更（2026-11-13 確認、2026-11-16 記録）
+
+外部の指摘（T34・T35・M36〜M41）を 2026-11-13 にコードと実データで確かめた。直すかどうかはユーザーが 2026-11-16 に決めた。
+
+### 13.1 経路集計の生物種の照合（修正済み、コミット `0fae999`）
+
+背景の species は手順書どおり `10090`、PubChem RDF の生物種 URI の末尾は `TAXID10090` で、文字列のまま比べていた。そのため実データでは
+`draft_comparison_findings` の経路集計が必ず `no_species_pathways` になっていた。合成の縦断テストが偽の URI（`http://example.org/10090`）を使っていて
+気づけなかった。`taxid_key` で `TAXID` の接頭辞を外してそろえ、背景と `organism` はどちらの書式でもよくした。2026-10-19 の実経路の検証
+（§11）の経路集計の 0 件は、このバグの影響を受けている。
+
+### 13.2 T34: パスウェイの被覆（事実。記録のみ）
+
+腎臓の加齢の実データ（Git 追跡外の検証の根拠ストアで計算し直した。マウス）:
+
+| | 陽イオン | 陰イオン |
+|---|---|---|
+| 全特徴 / 統計用射影の化合物 | 2,123 / 1,178 | 1,510 / 553 |
+| 照会した InChIKey のうち、どれかの生物種のパスウェイが付いたもの | 32 / 1,364（2.3%） | 46 / 1,532（3.0%） |
+| うちマウスのパスウェイ | 5（0.4%） | 20（1.3%） |
+| 射影の化合物でマウスのパスウェイを持つもの（13.1 の修正後） | 0 | 1（パスウェイ 2 件、`min_members` 未満で未検定） |
+
+パスウェイ設計書 §3.2 の 14.5% は索引の InChIKey の無作為標本の値で、実験の化合物（脂質が多い）ではずっと低い。原因は PubChem の注釈の不在で、
+コードでは上げられない。索引の ClassyFire の分類も、射影の化合物のうち完全な InChIKey で 2〜3%（先頭ブロックだけでも約 12%）しか覆わないので、
+代わりにならない。ユーザーの決定（2026-11-16「記録のみ」）でここに記録するだけにした。§7 のとおり、低被覆でも個々の候補と比較の説明は妨げない。
+
+### 13.3 T35: 経路集計の入力から特徴量を除く口（追加）
+
+`draft_comparison_findings` に `exclude_feature_ids` を足した。統計用射影の前に除き、理由 `caller_excluded` として `pathways.exclusion_counts` に数える
+（理由の判定では最初に見る）。事実（全特徴量の集計とページ）は変えない。外来の分子の走査で A・B になった特徴量を経路集計から除く、といった使い方を想定する。
+黙って無視しないため、未知の ID と、`include_pathways=False` での指定は誤りにする。旧来の `pathway_activity`（v1）には足していない（§3: v1 は互換を保ち、新機能は新しいツールで出す）。
+
+### 13.4 M36〜M41: 会話側 LLM への制約（事実。変えない）
+
+ユーザーの決定（2026-11-16「変えない」）で、仕組みは変えず、どこまで効いているかをここに記録する。
+
+| 指摘 | 確かめた事実 |
+|---|---|
+| M36 `analysis_id` を毎回渡させる | 根拠系 6 本（`set_analysis_context`・`match_feature_spectra`・`resolve_candidate_evidence`・`get_comparison_evidence`・`draft_comparison_findings`・`validate_comparison_claims`）と外来の分子の 3 本で必須、既定値は無い（§8 の再起動後の再読込と、別解析の混同の防止のため）。旧来のパスウェイ系 4 本（`load_differential`・`resolve_pathways`・`pathway_activity`・`draft_pathway_findings`）は `analysis_id` を取らず、プロセス内の状態を使う |
+| M38・M39 `confirmed` で経路集計を閉じる | `draft_comparison_findings` の経路集計は、背景の `status` と species がともに `confirmed` で、taxid が `organism` と一致するときだけ走る。`confirmed=True` は呼び出し側が立て、サーバが確かめるのは値ごとの `source` が空でないことだけ（§6 のとおり確認申告で、本人確認ではない）。旧来の `pathway_activity` にこの制限は無い |
+| M40 空の仮説の欄を返し、語を制限する | 両系統の `draft_*_findings` が空の仮説スロットを返す。「活性化」などの語の制限は、サーバ自身が書く facts をテスト（`tests/test_report.py`）で確かめているだけで、会話側 LLM の文章は検査しない（サーバは文章を受け取らない） |
+| M41 引用の様式を強いる | 強いていない。`validate_comparison_claims` は任意で（`next_actions` が勧めるだけ）、ID の実在と対応・版の一致だけを見る。ID を 1 つも引用しない主張も `valid=true` になる。§9 の「機械的に検証可能とする」の範囲であり、意味の妥当性は研究者のレビューに残る |

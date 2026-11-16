@@ -58,7 +58,9 @@
 | `parent_entry_id` | | 代謝物なら親の `entry_id`（出方の筋で親と連動を見る） |
 | `received_by` | ○ | `test` / `reference` / `both`（どちらの群に入ったか。溶媒・麻酔薬は `both`） |
 
-`received_by` の `test` は、走査の呼び出しで渡す `test_group`（§6）の側を指す。戻り値は entry ごとに、索引のレコード数・極性・付加体、組成式と単一同位体質量、
+`received_by` の `test` は、走査の呼び出しで渡す `test_group`（§6）の側を指す。登録は解析（`analysis_id`）ごとで、1 つの根拠バンドルは 1 つの比較
+（manifest の `comparison` は 1 つ、`analysis_id` は manifest のハッシュ）なので、`received_by` は比較ごとに書ける。3 群以上の試験では比較ごとにバンドルを書き出し、
+それぞれの `analysis_id` へ登録する（2026-11-13 の事実確認で「比較ごとに書けない」という指摘を確かめ、前提が誤りと分かった。§10.14）。戻り値は entry ごとに、索引のレコード数・極性・付加体、組成式と単一同位体質量、
 警告（索引に無い、組成式と InChIKey の質量の食い違いなど）。登録は解析の成果物として保存し（既存の `artifacts/` の
 仕組み）、再起動後も復元する。
 
@@ -158,11 +160,16 @@ A が減り、親の水準 A の特徴を使う連動も同じ分だけ減る。
 
 ## 6. 出力
 
-新しいツール `screen_xenobiotic_features(analysis_id, test_group, ppm, ppm_bands=None, polarity=None, max_shifts=2, output_path=None)`。
+新しいツール `screen_xenobiotic_features(analysis_id, test_group, ppm, ppm_bands=None, polarity=None, max_shifts=2, output_path=None, ppm_offset=None, coelution_rt_tol=0.1)`。
 
 - `test_group` は、バンドルの `comparison` の `group_a` か `group_b` の名前（薬剤を受けた側）。どちらとも一致しなければ誤りで止める。
   出方の筋の群の偏りと、表の `detected_test` / `detected_reference` はこれで決まる。名前から推測しない。
 - `polarity` は v3 では manifest から読み、引数と食い違えば誤りで止める。
+- `ppm_offset`（2026-11-16 に追加）は質量の窓の中心のずれ。形は ms-data-parser の `ppm_offset` と同じ `{"default": 0.0, "bands": [{"max_mz", "offset"}]}` で、
+  上流の工程 5 で決めた値をそのまま渡せる。中心は「実測 − 理論」の ppm、帯は理論 m/z が `max_mz` 未満の最初の帯（無ければ `default`）。窓は
+  理論 m/z × (1 + (中心 ± 許容幅) ppm) になる。幅と行の `ppm` 列（実測 − 理論）は変わらない。渡したときだけ要約の `params.ppm_offset` に残す（渡さなければ記録は前と同じ）。
+  §10 の較正と検証はどれも `ppm_offset` なしで走らせた。
+- `coelution_rt_tol`（2026-11-16 に追加、分）は共溶出の印の RT の幅。下の `coeluting` 列を決めるだけで、水準には使わない。
 
 - 戻り値は要約だけ: 水準ごとの特徴の数、有意な特徴（バンドルの `significant`）のうち水準ごとの数、entry ごとの水準 A・B の数、
   筋ごとの `unavailable` の理由、質量差の表と閾値の版、索引の識別（`index` の `bin_width`・`built_at`）、`intensities_stage`、較正の合否（`calibration`）。
@@ -171,8 +178,13 @@ A が減り、親の水準 A の特徴を使う連動も同じ分だけ減る。
   （MS/MS の有無が分からないので全特徴を `no_msms` と言わない。A・B が 0 を「薬剤由来なし」に読ませない）。`n_features_without_msms` は `null`。`verified_alignment` で空なら、対応づけた結果 MS/MS が無かったので従来どおり `no_msms`。
 - 全行は TSV で `output_path`（省略時は成果物の置き場所）に書く。列:
   `feature_id, mz, rt, log2fc, q_value, significant, level, entry_id, role, relation, theoretical_mz, ppm,
-  msms_shared_score, msms_shared_n, msms_shared_formulas, forward_rank, detected_test, detected_reference, rho_parent, notes`。
+  msms_shared_score, msms_shared_n, msms_shared_formulas, forward_rank, detected_test, detected_reference, rho_parent, notes, coeluting`。
   1 つの特徴に複数の entry の一致があれば行を分ける。
+- **共溶出の印 `coeluting`（2026-11-16 に追加。ユーザーの決定「印だけ足す」）。** 行の一致と同じ分子（同じ entry・同じ質量差の組）の、別のイオンの形
+  （付加体か損失が違う）に一致する別の特徴で、RT の差が `coelution_rt_tol` 以内のものを `特徴:イオン` の `;` 区切りで書く（並びはバンドルの特徴の順）。
+  同じ形に割れたスポットは裏付けにならないので数えない。RT の無い特徴と `msms_only` の行は空。要約の `coelution` に幅・相手のいる特徴の数・
+  その組の水準（特徴ごとに最も強いもの）を出す。**水準 A〜D の判定には使わない。** 判定に入れると §10 の較正と独立の検証をやり直す必要がある
+  （事前登録の規律では規則の変更にあたる）ので、印にとどめた。既定の 0.1 分は較正していない。
 - 大きい表は戻り値に載せない（呼び出し側の文脈を膨らませないため。v8 のレビューで `pathway_plot` の戻り値が文脈を圧迫した）。
 - 必要なら、行を引く `get_xenobiotic_screen(analysis_id, feature_ids=None, level=None, cursor=None, limit=50)`。カーソルは走査の版と絞り込みの条件に結び付き、
   違えば `stale_cursor`。戻りの `registration_id` は走査に使った登録で、今の登録と違えば `stale_registration` が真（止めない）。
@@ -823,3 +835,47 @@ MTBLS6965 は脂質の run（研究室の MSP と LBM で注釈）で、代謝�
 - 規則が偽陽性を防ぐことの独立の確かめには、ヒトの糞便・血清・尿など、複雑な試料の陽イオンの DDA の run が要る。手元には無く、新しく取得する必要がある。
 
 **r6 の後に決めないこと。** 規則・閾値・表は直さない。`CALIBRATION` の `status` は `revised_after_r4_failure_unvalidated` のまま。次はユーザーが決める。
+
+### 10.14 事実確認で残った限界と、その後の変更（2026-11-13 確認、2026-11-16 記録）
+
+外部の指摘（T37〜T41）を 2026-11-13 にコードとこの設計書で確かめた。T38・T39 はデータが足りないことが原因で、コードでは直らないので、ユーザーの決定（2026-11-16「記録のみ」）により、ここに記録するだけにした。規則・閾値・表は変えていない。
+
+**T38: 水準 B は独立のおとりで確かめられていない（事実）。**
+- 独立の検証で B を試せたのは r4（§10.11.1）だけで、B の偽陽性が 4 件出て不合格だった。そのあと B に親との共起を求める規則を足した（§5 の改訂）。
+- r5（§10.12.1）・r6（§10.13.1）は条件を満たした。ただし、質量の一致と MS/MS の共有（0.12 以上）が同じ組に重なる例が 1 件も無かった（陰イオンは参照が無く、陽イオンで共有が閾値を超えた組はすべて `msms_only`）。共起の規則だけでなく、B の判定そのものが、規則を改めた後には一度も試されていない。
+- 感度（真の代謝物を落とさないか）の独立の確かめも無い。r3 の 5 run は規則を作るときに見たデータである。
+- 確かめには、ヒトの糞便・血清・尿など複雑な試料の、陽イオンの DDA で、登録した分子の参照スペクトルがあり、その分子を投与していない run が要る（§10.13.1）。手元には無い。`CALIBRATION.status` は `revised_after_r4_failure_unvalidated` のまま。
+
+**T39: 登録した分子の多くに参照スペクトルが無い（陰イオンでは全部、陽イオンでは 3 分の 1）。** 較正とおとりで登録した 9 分子の、索引（`built_at` 2026-08-30T15:11:59+00:00）のレコード数:
+
+| 分子 | 陽イオン | 陰イオン |
+|---|---|---|
+| メトホルミン | 41 | 0 |
+| アムロジピン | 17 | 0 |
+| フルオキセチン | 34 | 0 |
+| ノルフルオキセチン | 18 | 0 |
+| ケタミン | 20 | 0 |
+| ノルケタミン | 1 | 0 |
+| ヒドロキシノルケタミン | 索引に無い（InChIKey を登録していない） | 同左 |
+| デヒドロノルケタミン | 索引に無い（同上） | 同左 |
+| キシラジン | 索引に無い（InChIKey `BPGXUIVWLQTVLZ` で引いて 0 件。登録では InChIKey を付けていない） | 同左 |
+
+陰イオンの run では MS/MS の筋がどの entry にも使えないので、A・B は原理的に付かない（§10.12.1）。参照が無いことは走査の要約の `unavailable.msms`（entry ごとに `no_reference_spectra` / `no_inchikey`）と各行の `notes` に出る。参照を増やすのは MassBank の収載の問題で、この走査の外にある。
+
+**T37・T40・T41 の扱い。**
+- T37（共溶出の水準が無い）は事実だった。ユーザーの決定（2026-11-16「印だけ足す」）で、水準を変えずに `coeluting` 列と要約の `coelution` を足した（§6）。
+  r3 の 5 run のバンドルを今の閾値（`xeno-thresholds-2026-11-05-r5`）・既定の 0.1 分で走らせた結果（水準は §10.12.1 と同じで、`pytest -m realdata` も合格）:
+
+  | run | 印の付いた特徴（A / B / C / D） |
+  |---|---|
+  | ST003841 pos | 85（2 / 2 / 8 / 73） |
+  | ST002901 pos | 492（18 / 60 / 31 / 383） |
+  | ST002901 neg | 221（0 / 0 / 0 / 221） |
+  | MTBLS9365 pos（おとり） | 54（0 / 0 / 0 / 54） |
+  | MTBLS9365 neg（おとり） | 47（0 / 0 / 1 / 46） |
+
+  メトホルミンの本体（ST003841 pos 4338、A、RT 8.31）には `[M+H-NH3]+`・`[M+Na]+`・`[M+K]+`・`[2M+H]+` の特徴が同じ RT に並び、狙いどおりに付く。
+  一方、おとりでも D の 46〜54 特徴に付く。付加体・損失・質量差の組み合わせが多く、混んだ RT では偶然の一致が並ぶためで、**印だけでは由来の根拠にならない**。
+  水準に入れなかった理由の一つである。
+- T40（`received_by` を比較ごとに書けない）は前提が誤りだった。1 つの解析は 1 つの比較なので、比較ごとに登録できる（§3.1）。ツールの説明に書き足しただけで、コードは変えていない。
+- T41（`ppm_offset` を渡せない）は事実だった。ms-data-parser と同じ形の `ppm_offset` を足した（§6）。渡さなければ結果は前と同じ。
